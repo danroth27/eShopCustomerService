@@ -1,0 +1,18 @@
+@page "/sign-in"
+@attribute [AllowAnonymous]
+
+<PageTitle>Local demo sign-in | eShop</PageTitle>
+<div class="signin-container">
+    <section class="panel signin-panel">
+        <span class="summary-icon"><Icon Name="shield" /></span>
+        <span class="eyebrow">eSHOP CUSTOMER SERVICE</span>
+        <h1>A clear path to the right resolution.</h1>
+        <p>Enter the local customer-service workspace as the seeded representative.</p>
+        <div class="representative"><span class="avatar large">TB</span><div><strong>Taylor Brooks</strong><span>Customer-service representative</span></div></div>
+        <form method="post" action="/demo/sign-in">
+            <input type="hidden" name="returnUrl" value="/" />
+            <button type="submit" class="button full-width">Enter demo workspace <Icon Name="arrow" /></button>
+        </form>
+        <p class="signin-disclaimer">Local demonstration only. This sign-in does not verify an identity. All customer information is fictional.</p>
+    </section>
+</div>

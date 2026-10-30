@@ -1,0 +1,50 @@
+@inherits LayoutComponentBase
+
+<div class="app-shell">
+    <aside class="sidebar">
+        <a class="brand" href="/" aria-label="eShop Customer Service home">
+            <span class="brand-mark"><Icon Name="bag" /></span>
+            <span>eShop<span class="brand-subtitle">CUSTOMER SERVICE</span></span>
+        </a>
+        <div class="workspace-label">WORKSPACE</div>
+        <nav aria-label="Main navigation">
+            <NavLink href="/" Match="NavLinkMatch.All"><Icon Name="grid" /> Overview</NavLink>
+            <NavLink href="/returns" Match="NavLinkMatch.Prefix"><Icon Name="return" /> Returns &amp; exchanges</NavLink>
+            <NavLink href="/contracts"><Icon Name="code" /> API workspace</NavLink>
+        </nav>
+        <div class="sidebar-bottom">
+            <div class="companion-label">AN eSHOP COMPANION</div>
+            <p>A focused workspace for thoughtful customer resolutions.</p>
+            <a href="https://github.com/dotnet/eShop" target="_blank" rel="noopener">About the eShop reference app <span aria-hidden="true">&nearr;</span></a>
+        </div>
+    </aside>
+    <div class="main-shell">
+        <header class="topbar">
+            <div class="topbar-context"><span class="status-dot"></span> Customer operations <span class="separator">/</span> Service workspace</div>
+            <div class="topbar-user">
+                <span class="demo-label">LOCAL DEMO</span>
+                <AuthorizeView>
+                    <Authorized>
+                        <span class="avatar">TB</span>
+                        <span class="user-details"><strong>@context.User.Identity?.Name</strong><small>Service representative</small></span>
+                        <form method="post" action="/demo/sign-out">
+                            <input type="hidden" name="confirmation" value="SIGNOUT" />
+                            <button class="text-button" type="submit">Sign out</button>
+                        </form>
+                    </Authorized>
+                    <NotAuthorized><a class="text-button" href="/sign-in">Sign in</a></NotAuthorized>
+                </AuthorizeView>
+            </div>
+        </header>
+        <main id="main-content">@Body</main>
+        <footer class="app-footer">
+            <span>eShop Customer Service <span class="separator">/</span> .NET 11</span>
+            <span>Fictional data. No payments or shipments are processed.</span>
+        </footer>
+    </div>
+</div>
+<div id="blazor-error-ui" role="alert">
+    The workspace encountered an unexpected error.
+    <a href="" class="reload">Reload</a>
+    <button class="dismiss" aria-label="Dismiss error">&times;</button>
+</div>

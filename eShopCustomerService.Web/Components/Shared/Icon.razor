@@ -1,0 +1,46 @@
+<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    @switch (Name)
+    {
+        case "bag":
+            <path d="M5 7h14l1 14H4L5 7Z M9 8V6a3 3 0 0 1 6 0v2" />
+            break;
+        case "grid":
+            <path d="M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z" />
+            break;
+        case "return":
+            <path d="m7 4-4 4 4 4 M3 8h11a6 6 0 1 1 0 12h-3" />
+            break;
+        case "code":
+            <path d="m8 6-6 6 6 6 M16 6l6 6-6 6 M14 3l-4 18" />
+            break;
+        case "check":
+            <path d="m5 12 4 4L19 6" />
+            break;
+        case "arrow":
+            <path d="M4 12h16 m-6-6 6 6-6 6" />
+            break;
+        case "box":
+            <path d="m3 7 9-5 9 5v10l-9 5-9-5V7Z m0 0 9 5 9-5 M12 12v10 M8 4l9 5" />
+            break;
+        case "shield":
+            <path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6l9-4Z m-4 10 3 3 5-6" />
+            break;
+        case "clock":
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+            break;
+        case "money":
+            <rect x="2" y="5" width="20" height="14" rx="3" />
+            <circle cx="12" cy="12" r="3" />
+            <path d="M5 9h1 M18 15h1" />
+            break;
+        default:
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 8v4 M12 16h.01" />
+            break;
+    }
+</svg>
+
+@code {
+    [Parameter] public string Name { get; set; } = "";
+}

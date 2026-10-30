@@ -1,0 +1,14 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+**/App_Data/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+.aspire/
+TestResults/
+playwright-report/
+node_modules/
+*.user
+*.suo

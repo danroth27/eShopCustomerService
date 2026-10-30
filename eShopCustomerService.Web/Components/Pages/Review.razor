@@ -1,0 +1,71 @@
+@page "/review/{DraftId:guid}"
+@attribute [Authorize(Policy = "CustomerService")]
+@inject ReturnStore Store
+@inject IConfiguration Configuration
+
+<PageTitle>Review resolution | eShop</PageTitle>
+<a class="back-link" href="@(draft is null ? "/" : $"/returns/{draft.OrderId}")"><span aria-hidden="true">&larr;</span> Back to return</a>
+<div class="page-heading"><div><span class="eyebrow">02 / REVIEW &amp; CONFIRM</span><h1>One final review.</h1><p>Check the details before committing this resolution.</p></div></div>
+@if (draft is null || item is null)
+{
+    <section class="panel empty-state"><h2>Draft not found</h2><p>This draft may have been cleared by a demo reset.</p><a class="button secondary" href="/">Back to queue</a></section>
+}
+else
+{
+    <div class="review-grid">
+        <section class="panel review-panel">
+            <div class="panel-heading"><h2>Resolution for order #@draft.OrderId</h2><span class="badge @(draft.ConfirmedAt is null ? "warning" : "success")">@(draft.ConfirmedAt is null ? "Draft" : "Confirmed")</span></div>
+            <div class="review-customer"><span class="eyebrow">CUSTOMER</span><h3>@item.Customer</h3><p>@item.Company</p></div>
+            <ResolutionSummary Value="draft.Resolution" />
+            @if (!string.IsNullOrEmpty(Error))
+            {
+                <div class="notice error" role="alert">@Error</div>
+            }
+            @if (draft.ConfirmedAt is null && item.Status == "Open")
+            {
+                <div class="notice subtle"><Icon Name="shield" /><span>Confirmation rechecks the business rules and records the outcome and activity history in one transaction.</span></div>
+                <form method="post" action="/returns/confirm">
+                    <input type="hidden" name="draftId" value="@draft.Id" />
+                    <button class="button full-width" type="submit">Confirm @(draft.Resolution.Value is RefundResolution ? "refund" : "replacement") <Icon Name="check" /></button>
+                </form>
+                <p class="fine-print">This is a local simulation. No real payment or shipment is processed.</p>
+            }
+            else
+            {
+                <p class="notice success">This return has already been resolved. It will not be processed again.</p>
+                <a class="button" href="/returns/@item.OrderId">View confirmed resolution</a>
+            }
+        </section>
+        <aside class="panel context-panel">
+            <span class="summary-icon"><Icon Name="shield" /></span>
+            <h2>A deliberate final step</h2>
+            <p>The representative confirms from this application's own origin. The form posts a draft ID, not union-valued form fields.</p>
+            <div class="panel-divider"></div>
+            <span class="eyebrow">CSRF DEMONSTRATION</span>
+            <p>Open the independent test origin to attempt this same form submission. A rejected request must leave this draft unchanged.</p>
+            <label class="small-label" for="draft-id">Draft ID</label>
+            <input id="draft-id" class="code-input" readonly value="@draft.Id" />
+            @if (Configuration["CrossOriginUrl"] is { } origin)
+            {
+                <a class="button secondary full-width" href="@($"{origin}/?draftId={draft.Id}")" target="_blank" rel="noopener">Open cross-origin test <span aria-hidden="true">&nearr;</span></a>
+            }
+            else
+            {
+                <p class="fine-print">Start with Aspire to discover the independent test origin.</p>
+            }
+        </aside>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid DraftId { get; set; }
+    [SupplyParameterFromQuery(Name = "error")] public string? Error { get; set; }
+    private ResolutionDraft? draft;
+    private ReturnCase? item;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        draft = await Store.GetDraftAsync(DraftId);
+        item = draft is null ? null : await Store.GetCaseAsync(draft.OrderId);
+    }
+}

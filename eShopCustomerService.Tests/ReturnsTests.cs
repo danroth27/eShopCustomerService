@@ -1,0 +1,260 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+using eShopCustomerService.Web.Data;
+using eShopCustomerService.Web.Domain;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace eShopCustomerService.Tests;
+
+public sealed class ReturnsTests
+{
+    [Theory]
+    [InlineData("""{"amount":149,"paymentReference":"PAY-48021"}""", typeof(RefundResolution))]
+    [InlineData("""{"productCode":"DOCK-PRO-PLUS","deliveryAddress":"120 Market Street"}""", typeof(ReplacementResolution))]
+    public void Union_round_trips_as_the_active_plain_json_case(string json, Type expectedCase)
+    {
+        var resolution = JsonSerializer.Deserialize<Resolution>(json, JsonSerializerOptions.Web);
+        Assert.IsType(expectedCase, resolution.Value);
+        var roundTrip = JsonSerializer.Serialize(resolution, JsonSerializerOptions.Web);
+        Assert.DoesNotContain("$type", roundTrip);
+        Assert.Equal(resolution.Value, JsonSerializer.Deserialize<Resolution>(roundTrip, JsonSerializerOptions.Web).Value);
+    }
+
+    [Fact]
+    public async Task Api_requires_a_representative_session()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        using var response = await client.GetAsync("/api/returns");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var confirmation = await client.PostAsync("/returns/confirm", Form(Guid.NewGuid()));
+        Assert.Equal(HttpStatusCode.Redirect, confirmation.StatusCode);
+        Assert.Equal("/sign-in", confirmation.Headers.Location!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task Minimal_api_awaits_the_shared_inventory_rule()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        using var unavailable = await client.PostAsJsonAsync("/api/replacements/validate", new ReplacementRequest
+        {
+            OrderId = 48021,
+            ProductCode = "DOCK-PRO",
+            DeliveryAddress = "120 Market Street"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, unavailable.StatusCode);
+        using var errors = JsonDocument.Parse(await unavailable.Content.ReadAsStringAsync());
+        Assert.Contains("unavailable", errors.RootElement.GetProperty("errors").GetProperty("ProductCode")[0].GetString());
+        using var available = await client.PostAsJsonAsync("/api/replacements/validate", new ReplacementRequest
+        {
+            OrderId = 48021,
+            ProductCode = "DOCK-PRO-PLUS",
+            DeliveryAddress = "120 Market Street"
+        });
+        Assert.Equal(HttpStatusCode.OK, available.StatusCode);
+    }
+
+    [Fact]
+    public async Task Openapi_describes_both_union_cases_and_defaults_to_32()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        using var response = await client.GetAsync("/openapi/v1.json");
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("3.2.0", document.RootElement.GetProperty("openapi").GetString());
+        var schemas = document.RootElement.GetProperty("components").GetProperty("schemas");
+        var union = schemas.EnumerateObject().Single(s => s.Name == "Resolution").Value;
+        var cases = union.GetProperty("anyOf").EnumerateArray().ToArray();
+        Assert.Equal(2, cases.Length);
+        Assert.Contains(cases, c => c.GetProperty("$ref").GetString()!.EndsWith("/RefundResolution", StringComparison.Ordinal));
+        Assert.Contains(cases, c => c.GetProperty("$ref").GetString()!.EndsWith("/ReplacementResolution", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("""{"orderId":48021,"resolution":null}""")]
+    [InlineData("""{"orderId":48021,"resolution":{"amount":1,"paymentReference":"PAY-48021"}}""")]
+    [InlineData("""{"orderId":48021,"resolution":{"productCode":"DOCK-PRO-PLUS","deliveryAddress":""}}""")]
+    [InlineData("""{"orderId":48021,"resolution":{"unrecognized":"value"}}""")]
+    [InlineData("""{"orderId":48021,"resolution":{"amount":149,"paymentReference":"PAY-48021","productCode":"DOCK-PRO-PLUS","deliveryAddress":"120 Market Street"}}""")]
+    public async Task Invalid_draft_contracts_never_mutate_the_order(string json)
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        using var response = await client.PostAsync("/api/drafts", new StringContent(json, Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        Assert.Equal("Open", (await store.GetCaseAsync(48021))!.Status);
+        Assert.Equal(3, (await store.GetAuditAsync(48021)).Count);
+    }
+
+    [Fact]
+    public async Task Authenticated_cross_origin_form_is_rejected_without_state_change()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        var draft = await CreateDraftAsync(client);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/returns/confirm") { Content = Form(draft.Id) };
+        request.Headers.Add("Sec-Fetch-Site", "same-site");
+        request.Headers.Add("Origin", "https://localhost:7444");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        Assert.Null((await store.GetDraftAsync(draft.Id))!.ConfirmedAt);
+        Assert.Equal("Open", (await store.GetCaseAsync(48021))!.Status);
+        Assert.Equal(12, (await store.GetInventoryAsync()).Single(p => p.ProductCode == "DOCK-PRO-PLUS").Available);
+        Assert.Equal(4, (await store.GetAuditAsync(48021)).Count);
+    }
+
+    [Fact]
+    public async Task Same_origin_confirmation_is_atomic_and_repeated_posts_are_idempotent()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        var draft = await CreateDraftAsync(client);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/returns/confirm") { Content = Form(draft.Id) };
+            request.Headers.Add("Sec-Fetch-Site", "same-origin");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.Equal("/returns/48021?completed=true", response.Headers.Location!.OriginalString);
+        }
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        Assert.Equal("Resolved", (await store.GetCaseAsync(48021))!.Status);
+        Assert.Equal(11, (await store.GetInventoryAsync()).Single(p => p.ProductCode == "DOCK-PRO-PLUS").Available);
+        var confirmations = (await store.GetAuditAsync(48021)).Where(e => e.Action.StartsWith("Replacement confirmed", StringComparison.Ordinal)).ToArray();
+        Assert.Single(confirmations);
+        Assert.Equal("Taylor Brooks", confirmations[0].Actor);
+    }
+
+    [Fact]
+    public async Task Inventory_change_after_validation_rolls_back_confirmation()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        var draft = await CreateDraftAsync(client);
+        await SetStockAsync(factory.DatabasePath, 0);
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        await Assert.ThrowsAsync<DomainException>(() => store.ConfirmAsync(draft.Id, "Test representative"));
+        Assert.Equal("Open", (await store.GetCaseAsync(48021))!.Status);
+        Assert.Null((await store.GetDraftAsync(draft.Id))!.ConfirmedAt);
+        Assert.Equal(4, (await store.GetAuditAsync(48021)).Count);
+    }
+
+    [Fact]
+    public async Task Competing_returns_cannot_allocate_the_last_unit_twice()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        var first = await CreateDraftAsync(client);
+        var second = await CreateDraftAsync(client, 48023);
+        await SetStockAsync(factory.DatabasePath, 1);
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        async Task<bool> ConfirmAsync(Guid id)
+        {
+            try
+            {
+                await store.ConfirmAsync(id, "Test representative");
+                return true;
+            }
+            catch (DomainException)
+            {
+                return false;
+            }
+        }
+        var results = await Task.WhenAll(ConfirmAsync(first.Id), ConfirmAsync(second.Id));
+        Assert.Single(results, success => success);
+        Assert.Equal(0, (await store.GetInventoryAsync()).Single(p => p.ProductCode == "DOCK-PRO-PLUS").Available);
+        Assert.Single(await store.GetCasesAsync(), c => c.Status == "Resolved");
+    }
+
+    [Fact]
+    public async Task Confirmed_resolution_survives_host_restart()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"eshop-persistence-{Guid.NewGuid():N}.db");
+        try
+        {
+            using (var first = new DemoFactory(path, deleteOnDispose: false))
+            {
+                using var client = first.Browser();
+                await DemoFactory.SignInAsync(client);
+                var store = first.Services.GetRequiredService<ReturnStore>();
+                var draft = await store.SaveDraftAsync(new(48022, new Resolution(new RefundResolution(149m, "PAY-48022"))), "Test representative");
+                await store.ConfirmAsync(draft.Id, "Test representative");
+            }
+            using (var restarted = new DemoFactory(path, deleteOnDispose: false))
+            {
+                using var client = restarted.Browser();
+                var item = await restarted.Services.GetRequiredService<ReturnStore>().GetCaseAsync(48022);
+                Assert.Equal("Resolved", item!.Status);
+                Assert.IsType<RefundResolution>(item.Resolution!.Value.Value);
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Reset_requires_authentication_and_a_trusted_form_origin()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        using var anonymous = await client.PostAsync("/demo/reset", new FormUrlEncodedContent(new Dictionary<string, string> { ["confirmation"] = "RESET" }));
+        Assert.Equal(HttpStatusCode.Redirect, anonymous.StatusCode);
+        await DemoFactory.SignInAsync(client);
+        var draft = await CreateDraftAsync(client);
+        using var untrusted = new HttpRequestMessage(HttpMethod.Post, "/demo/reset")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["confirmation"] = "RESET" })
+        };
+        untrusted.Headers.Add("Sec-Fetch-Site", "same-site");
+        using var rejected = await client.SendAsync(untrusted);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        Assert.NotNull(await store.GetDraftAsync(draft.Id));
+        using var trusted = new HttpRequestMessage(HttpMethod.Post, "/demo/reset")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["confirmation"] = "RESET" })
+        };
+        trusted.Headers.Add("Sec-Fetch-Site", "same-origin");
+        using var reset = await client.SendAsync(trusted);
+        Assert.Equal(HttpStatusCode.Redirect, reset.StatusCode);
+        Assert.Null(await store.GetDraftAsync(draft.Id));
+        Assert.Equal(3, (await store.GetAuditAsync(48021)).Count);
+    }
+
+    private static async Task<ResolutionDraft> CreateDraftAsync(HttpClient client, int orderId = 48021)
+    {
+        using var response = await client.PostAsJsonAsync("/api/drafts", new SaveResolutionRequest(orderId,
+            new Resolution(new ReplacementResolution("DOCK-PRO-PLUS", "120 Market Street, Seattle"))));
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<ResolutionDraft>())!;
+    }
+
+    private static FormUrlEncodedContent Form(Guid id) =>
+        new(new Dictionary<string, string> { ["draftId"] = id.ToString() });
+
+    private static async Task SetStockAsync(string path, int available)
+    {
+        await using var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        await db.OpenAsync();
+        await using var command = db.CreateCommand();
+        command.CommandText = "UPDATE Inventory SET Available = $available WHERE ProductCode = 'DOCK-PRO-PLUS'";
+        command.Parameters.AddWithValue("$available", available);
+        await command.ExecuteNonQueryAsync();
+    }
+}

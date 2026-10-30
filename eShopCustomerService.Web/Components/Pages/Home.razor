@@ -1,0 +1,73 @@
+@page "/"
+@page "/returns"
+@attribute [Authorize(Policy = "CustomerService")]
+@inject ReturnStore Store
+
+<PageTitle>Customer service | eShop</PageTitle>
+
+<div class="page-heading">
+    <div><span class="eyebrow">CUSTOMER OPERATIONS</span><h1>Every return. A considered resolution.</h1>
+        <p>Review the context, find the right outcome, and keep the customer moving.</p></div>
+    <a class="button" href="/returns/48021">Open featured return <Icon Name="arrow" /></a>
+</div>
+
+@if (cases is null)
+{
+    <p role="status">Loading the service workspace...</p>
+}
+else
+{
+    <section class="metrics" aria-label="Workspace metrics">
+        <article class="metric"><span class="metric-label">Open returns <Icon Name="return" /></span><strong>@cases.Count(c => c.Status == "Open")</strong><small>Ready for a representative</small></article>
+        <article class="metric"><span class="metric-label">Resolved <Icon Name="check" /></span><strong>@cases.Count(c => c.Status == "Resolved")</strong><small>Confirmed customer outcomes</small></article>
+        <article class="metric"><span class="metric-label">Replacement inventory <Icon Name="box" /></span><strong>@inventory.Sum(p => p.Available)</strong><small>Units available to allocate</small></article>
+    </section>
+    <div class="overview-grid">
+        <section class="panel">
+            <div class="panel-heading"><div><h2>Returns queue</h2><p>Customer context and the next action, together.</p></div><span class="badge neutral">@cases.Count cases</span></div>
+            <div class="table-scroll">
+                <table class="cases-table">
+                    <thead><tr><th>Order / customer</th><th>Product</th><th>Status</th><th><span class="sr-only">Action</span></th></tr></thead>
+                    <tbody>
+                        @foreach (var item in cases)
+                        {
+                            <tr @key="item.OrderId">
+                                <td><a class="order-link" href="/returns/@item.OrderId">#@item.OrderId</a><strong>@item.Customer</strong><small>@item.Company</small></td>
+                                <td>@item.Product<small>@item.ProductCode</small></td>
+                                <td><span class="badge @(item.Status == "Resolved" ? "success" : "warning")">@item.Status</span></td>
+                                <td><a class="table-action" href="/returns/@item.OrderId" aria-label="Open order @item.OrderId"><Icon Name="arrow" /></a></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        <aside class="panel context-panel">
+            <span class="summary-icon"><Icon Name="shield" /></span>
+            <h2>Designed for a clear decision</h2>
+            <p>Refund to the original payment, or exchange for an available compatible product.</p>
+            <div class="context-rule"><Icon Name="check" /><span>Explicit resolution types</span></div>
+            <div class="context-rule"><Icon Name="check" /><span>Inventory checked before submission</span></div>
+            <div class="context-rule"><Icon Name="check" /><span>Reviewed before confirmation</span></div>
+            <div class="context-rule"><Icon Name="check" /><span>Recorded in the activity history</span></div>
+            <div class="panel-divider"></div>
+            <span class="eyebrow">PRESENTER CONTROLS</span>
+            <p>Reset the fictional orders, drafts, and inventory for another walkthrough.</p>
+            <form method="post" action="/demo/reset">
+                <input type="hidden" name="confirmation" value="RESET" />
+                <button class="button secondary full-width" type="submit">Reset demo data</button>
+            </form>
+        </aside>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<ReturnCase>? cases;
+    private IReadOnlyList<InventoryItem> inventory = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        cases = await Store.GetCasesAsync();
+        inventory = await Store.GetInventoryAsync();
+    }
+}

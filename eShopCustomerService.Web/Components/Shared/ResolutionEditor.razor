@@ -1,0 +1,132 @@
+@inject ReturnStore Store
+@inject NavigationManager Navigation
+@inject ILogger<ResolutionEditor> Logger
+@implements IDisposable
+
+<section class="panel editor-panel">
+    <div class="panel-heading"><div><h2>Resolve this return</h2><p>Choose the outcome that works for the customer.</p></div><span class="step-label">01 / PREPARE</span></div>
+    <div class="resolution-choices" role="group" aria-label="Resolution type">
+        <button type="button" class="choice @(kind == "refund" ? "selected" : "")" aria-pressed="@(kind == "refund")" @onclick='() => kind = "refund"' disabled="@InteractionUnavailable">
+            <Icon Name="money" /><strong>Refund</strong><span>Return to original payment</span>
+        </button>
+        <button type="button" class="choice @(kind == "replacement" ? "selected" : "")" aria-pressed="@(kind == "replacement")" @onclick='() => kind = "replacement"' disabled="@InteractionUnavailable">
+            <Icon Name="box" /><strong>Replacement</strong><span>Exchange for an available model</span>
+        </button>
+    </div>
+    @if (error is not null)
+    {
+        <div class="notice error" role="alert">@error</div>
+    }
+    @if (kind == "replacement")
+    {
+        <EditForm EditContext="editContext" OnValidSubmit="SaveReplacementAsync" FormName="replacement">
+            <DataAnnotationsValidator />
+            @if (editContext.IsValidationFaulted())
+            {
+                <div class="notice error" role="alert">Validation could not be completed. Check the service and try again.</div>
+            }
+            <div class="field">
+                <label for="replacement-product">Replacement model</label>
+                <InputSelect id="replacement-product" @bind-Value="model.ProductCode" disabled="@InteractionUnavailable">
+                    <option value="">Select a compatible replacement</option>
+                    @foreach (var product in products)
+                    {
+                        <option value="@product.ProductCode" @key="product.ProductCode">@product.Name @(product.Available > 0 ? $" / {product.Available} available" : " / currently unavailable")</option>
+                    }
+                </InputSelect>
+                @if (editContext.IsValidationPending(() => model.ProductCode))
+                {
+                    <div class="field-status pending" role="status"><span class="spinner"></span> Checking inventory availability...</div>
+                }
+                else if (editContext.IsValidationFaulted(() => model.ProductCode))
+                {
+                    <div class="field-status error" role="alert">Inventory could not be checked. Try again before continuing.</div>
+                }
+                else if (editContext.IsModified(editContext.Field(nameof(model.ProductCode)))
+                    && !editContext.GetValidationMessages(() => model.ProductCode).Any()
+                    && !string.IsNullOrEmpty(model.ProductCode))
+                {
+                    <div class="field-status available" role="status"><Icon Name="check" /> Available for replacement</div>
+                }
+                <ValidationMessage For="() => model.ProductCode" />
+            </div>
+            <div class="field">
+                <label for="delivery-address">Delivery address</label>
+                <InputTextArea id="delivery-address" @bind-Value="model.DeliveryAddress" rows="2" disabled="@InteractionUnavailable" />
+                <ValidationMessage For="() => model.DeliveryAddress" />
+            </div>
+            <div class="notice subtle"><Icon Name="shield" /><span>Availability is checked now. Stock is allocated only when you confirm.</span></div>
+            <div class="editor-footer"><span>No shipment is created in this demo.</span>
+                <button class="button" type="submit" disabled="@(InteractionUnavailable || ValidationPending)">
+                    @(saving ? "Saving draft..." : ValidationPending ? "Validating..." : "Review replacement") <Icon Name="arrow" />
+                </button>
+            </div>
+        </EditForm>
+    }
+    else
+    {
+        <div class="refund-preview"><span class="eyebrow">REFUND AMOUNT</span><strong>@Order.PaidAmount.ToString("C", CultureInfo.GetCultureInfo("en-US"))</strong><p>Full refund to the original payment method.</p></div>
+        <dl class="facts"><div><dt>Payment reference</dt><dd>PAY-@Order.OrderId</dd></div><div><dt>Refund destination</dt><dd>Original payment method</dd></div></dl>
+        <div class="notice subtle"><Icon Name="shield" /><span>The amount and payment reference must match the original order.</span></div>
+        <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? "Saving draft..." : "Review refund") <Icon Name="arrow" /></button></div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public ReturnCase Order { get; set; } = default!;
+    [CascadingParameter] private Task<AuthenticationState> AuthenticationState { get; set; } = default!;
+    private string kind = "replacement";
+    private ReplacementRequest model = new();
+    private EditContext editContext = default!;
+    private IReadOnlyList<InventoryItem> products = [];
+    private bool saving;
+    private string? error;
+    private bool InteractionUnavailable => saving || !RendererInfo.IsInteractive;
+    private bool ValidationPending => editContext.IsValidationPending()
+        || editContext.IsValidationPending(() => model.ProductCode);
+
+    protected override async Task OnInitializedAsync()
+    {
+        model = new() { OrderId = Order.OrderId, DeliveryAddress = Order.DeliveryAddress };
+        editContext = new(model);
+        editContext.OnValidationStateChanged += HandleValidationStateChanged;
+        products = await Store.GetInventoryAsync();
+    }
+
+    private void HandleValidationStateChanged(object? sender, ValidationStateChangedEventArgs args) =>
+        _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => editContext.OnValidationStateChanged -= HandleValidationStateChanged;
+
+    private Task SaveReplacementAsync() => SaveAsync(new Resolution(
+        new ReplacementResolution(model.ProductCode, model.DeliveryAddress)));
+
+    private Task SaveRefundAsync() => SaveAsync(new Resolution(
+        new RefundResolution(Order.PaidAmount, $"PAY-{Order.OrderId}")));
+
+    private async Task SaveAsync(Resolution resolution)
+    {
+        saving = true;
+        error = null;
+        try
+        {
+            var user = (await AuthenticationState).User;
+            if (!user.IsInRole("Representative"))
+            {
+                error = "Your representative session is no longer available. Sign in again.";
+                return;
+            }
+            var draft = await Store.SaveDraftAsync(new(Order.OrderId, resolution), user.Identity!.Name!);
+            Navigation.NavigateTo($"/review/{draft.Id}", forceLoad: true);
+        }
+        catch (DomainException exception)
+        {
+            Logger.LogWarning(exception, "Draft rejected for order {OrderId}", Order.OrderId);
+            error = exception.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

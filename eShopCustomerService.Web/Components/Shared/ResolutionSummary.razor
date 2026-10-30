@@ -1,0 +1,26 @@
+@switch (Value.Value)
+{
+    case RefundResolution refund:
+        <div class="resolution-summary">
+            <span class="summary-icon"><Icon Name="money" /></span>
+            <div><span class="eyebrow">REFUND RESOLUTION</span><h3>@refund.Amount.ToString("C", CultureInfo.GetCultureInfo("en-US")) to original payment</h3>
+                <p>Payment reference <code>@refund.PaymentReference</code></p>
+                <small>Simulated refund only. No payment is issued.</small></div>
+        </div>
+        break;
+    case ReplacementResolution replacement:
+        <div class="resolution-summary">
+            <span class="summary-icon"><Icon Name="box" /></span>
+            <div><span class="eyebrow">REPLACEMENT RESOLUTION</span><h3>@(replacement.ProductCode == "DOCK-PRO-PLUS" ? "USB-C Dock Pro+" : replacement.ProductCode)</h3>
+                <p>@replacement.DeliveryAddress</p>
+                <small>One unit allocated on confirmation. No shipment is created.</small></div>
+        </div>
+        break;
+    default:
+        <p class="notice error">This resolution has no active case.</p>
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public Resolution Value { get; set; }
+}

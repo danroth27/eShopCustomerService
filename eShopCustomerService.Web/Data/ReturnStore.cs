@@ -1,0 +1,336 @@
+using System.Globalization;
+using System.Text.Json;
+using eShopCustomerService.Web.Domain;
+using Microsoft.Data.Sqlite;
+
+namespace eShopCustomerService.Web.Data;
+
+public sealed class ReturnStore : IDisposable
+{
+    private readonly string connectionString;
+    private readonly SemaphoreSlim writer = new(1, 1);
+
+    public ReturnStore(IConfiguration configuration, IWebHostEnvironment environment)
+    {
+        var path = configuration["Demo:DatabasePath"]
+            ?? Path.Combine(environment.ContentRootPath, "App_Data", "returns.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        connectionString = new SqliteConnectionStringBuilder { DataSource = path, ForeignKeys = true, Pooling = false }.ToString();
+    }
+
+    public async Task InitializeAsync()
+    {
+        await using var db = await OpenAsync();
+        await using var command = db.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS Orders (
+                Id INTEGER PRIMARY KEY, Customer TEXT NOT NULL, Company TEXT NOT NULL,
+                Email TEXT NOT NULL, Product TEXT NOT NULL, ProductCode TEXT NOT NULL,
+                PaidCents INTEGER NOT NULL, Address TEXT NOT NULL, Reason TEXT NOT NULL,
+                Status TEXT NOT NULL DEFAULT 'Open', ResolutionJson TEXT);
+            CREATE TABLE IF NOT EXISTS Inventory (
+                ProductCode TEXT PRIMARY KEY, Name TEXT NOT NULL, Description TEXT NOT NULL,
+                Available INTEGER NOT NULL CHECK(Available >= 0));
+            CREATE TABLE IF NOT EXISTS Drafts (
+                Id TEXT PRIMARY KEY, OrderId INTEGER NOT NULL REFERENCES Orders(Id),
+                ResolutionJson TEXT NOT NULL, CreatedAt TEXT NOT NULL, ConfirmedAt TEXT);
+            CREATE TABLE IF NOT EXISTS Audit (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT, OrderId INTEGER NOT NULL REFERENCES Orders(Id),
+                Actor TEXT NOT NULL, Action TEXT NOT NULL, Timestamp TEXT NOT NULL);
+            """;
+        await command.ExecuteNonQueryAsync();
+        command.CommandText = "SELECT COUNT(*) FROM Orders";
+        if ((long)(await command.ExecuteScalarAsync())! == 0)
+        {
+            await SeedAsync(db);
+        }
+    }
+
+    public async Task<IReadOnlyList<ReturnCase>> GetCasesAsync(CancellationToken ct = default)
+    {
+        await using var db = await OpenAsync(ct);
+        await using var command = db.CreateCommand();
+        command.CommandText = "SELECT * FROM Orders ORDER BY Id";
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        List<ReturnCase> cases = [];
+        while (await reader.ReadAsync(ct))
+        {
+            cases.Add(ReadCase(reader));
+        }
+        return cases;
+    }
+
+    public async Task<ReturnCase?> GetCaseAsync(int orderId, CancellationToken ct = default)
+    {
+        await using var db = await OpenAsync(ct);
+        return await FindCaseAsync(db, null, orderId, ct);
+    }
+
+    public async Task<IReadOnlyList<InventoryItem>> GetInventoryAsync(CancellationToken ct = default)
+    {
+        await using var db = await OpenAsync(ct);
+        await using var command = db.CreateCommand();
+        command.CommandText = "SELECT ProductCode, Name, Description, Available FROM Inventory ORDER BY ProductCode";
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        List<InventoryItem> products = [];
+        while (await reader.ReadAsync(ct))
+        {
+            products.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3)));
+        }
+        return products;
+    }
+
+    public async Task<IReadOnlyList<AuditEntry>> GetAuditAsync(int orderId, CancellationToken ct = default)
+    {
+        await using var db = await OpenAsync(ct);
+        await using var command = db.CreateCommand();
+        command.CommandText = "SELECT Id, Actor, Action, Timestamp FROM Audit WHERE OrderId = $order ORDER BY Id DESC";
+        command.Parameters.AddWithValue("$order", orderId);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        List<AuditEntry> entries = [];
+        while (await reader.ReadAsync(ct))
+        {
+            entries.Add(new(reader.GetInt64(0), orderId, reader.GetString(1), reader.GetString(2),
+                DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture)));
+        }
+        return entries;
+    }
+
+    public async Task<ResolutionDraft?> GetDraftAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var db = await OpenAsync(ct);
+        return await FindDraftAsync(db, null, id, ct);
+    }
+
+    public async Task<ResolutionDraft> SaveDraftAsync(SaveResolutionRequest request, string actor, CancellationToken ct = default)
+    {
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            using var transaction = db.BeginTransaction();
+            var order = await FindCaseAsync(db, transaction, request.OrderId, ct)
+                ?? throw new DomainException("The order was not found.", 404);
+            if (order.Status != "Open")
+            {
+                throw new DomainException("This return has already been resolved.");
+            }
+            await ValidateResolutionAsync(db, transaction, order, request.Resolution, ct);
+            var draft = new ResolutionDraft(Guid.NewGuid(), order.OrderId, request.Resolution, DateTimeOffset.UtcNow, null);
+            await using var command = db.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "INSERT INTO Drafts VALUES ($id, $order, $json, $created, NULL)";
+            command.Parameters.AddWithValue("$id", draft.Id.ToString());
+            command.Parameters.AddWithValue("$order", order.OrderId);
+            command.Parameters.AddWithValue("$json", JsonSerializer.Serialize(request.Resolution, JsonSerializerOptions.Web));
+            command.Parameters.AddWithValue("$created", draft.CreatedAt.ToString("O"));
+            await command.ExecuteNonQueryAsync(ct);
+            await AddAuditAsync(db, transaction, order.OrderId, actor, "Resolution draft prepared", ct);
+            transaction.Commit();
+            return draft;
+        }
+        finally
+        {
+            writer.Release();
+        }
+    }
+
+    public async Task<ReturnCase> ConfirmAsync(Guid id, string actor, CancellationToken ct = default)
+    {
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            using var transaction = db.BeginTransaction();
+            var draft = await FindDraftAsync(db, transaction, id, ct)
+                ?? throw new DomainException("The resolution draft was not found.", 404);
+            var order = await FindCaseAsync(db, transaction, draft.OrderId, ct)
+                ?? throw new DomainException("The order was not found.", 404);
+            if (draft.ConfirmedAt is not null)
+            {
+                return order;
+            }
+            if (order.Status != "Open")
+            {
+                throw new DomainException("A different resolution has already been confirmed for this return.");
+            }
+            await ValidateResolutionAsync(db, transaction, order, draft.Resolution, ct);
+
+            if (draft.Resolution.Value is ReplacementResolution replacement)
+            {
+                await using var allocation = db.CreateCommand();
+                allocation.Transaction = transaction;
+                allocation.CommandText = "UPDATE Inventory SET Available = Available - 1 WHERE ProductCode = $code AND Available > 0";
+                allocation.Parameters.AddWithValue("$code", replacement.ProductCode);
+                if (await allocation.ExecuteNonQueryAsync(ct) != 1)
+                {
+                    throw new DomainException("Inventory changed. Choose an available replacement.");
+                }
+            }
+
+            var json = JsonSerializer.Serialize(draft.Resolution, JsonSerializerOptions.Web);
+            await using var command = db.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE Orders SET Status = 'Resolved', ResolutionJson = $json WHERE Id = $order;
+                UPDATE Drafts SET ConfirmedAt = $now WHERE Id = $id;
+                """;
+            command.Parameters.AddWithValue("$json", json);
+            command.Parameters.AddWithValue("$order", order.OrderId);
+            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+            command.Parameters.AddWithValue("$id", id.ToString());
+            await command.ExecuteNonQueryAsync(ct);
+            var action = draft.Resolution.Value is RefundResolution
+                ? "Simulated refund confirmed; no payment was issued"
+                : "Replacement confirmed and one unit allocated; no shipment was created";
+            await AddAuditAsync(db, transaction, order.OrderId, actor, action, ct);
+            transaction.Commit();
+            return order with { Status = "Resolved", Resolution = draft.Resolution };
+        }
+        finally
+        {
+            writer.Release();
+        }
+    }
+
+    public async Task ResetAsync(CancellationToken ct = default)
+    {
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            await SeedAsync(db);
+        }
+        finally
+        {
+            writer.Release();
+        }
+    }
+
+    private static async Task ValidateResolutionAsync(
+        SqliteConnection db, SqliteTransaction transaction, ReturnCase order, Resolution resolution, CancellationToken ct)
+    {
+        switch (resolution.Value)
+        {
+            case RefundResolution refund when refund.Amount == order.PaidAmount
+                && refund.PaymentReference == $"PAY-{order.OrderId}":
+                return;
+            case RefundResolution:
+                throw new DomainException("A full refund must match the original payment and paid amount.", 400);
+            case ReplacementResolution replacement:
+                if (string.IsNullOrWhiteSpace(replacement.DeliveryAddress)
+                    || replacement.DeliveryAddress.Length is < 5 or > 240)
+                {
+                    throw new DomainException("Provide a delivery address between 5 and 240 characters.", 400);
+                }
+                await using (var check = db.CreateCommand())
+                {
+                    check.Transaction = transaction;
+                    check.CommandText = "SELECT Available FROM Inventory WHERE ProductCode = $code";
+                    check.Parameters.AddWithValue("$code", replacement.ProductCode ?? "");
+                    var value = await check.ExecuteScalarAsync(ct);
+                    if (value is not long available || available <= 0)
+                    {
+                        throw new DomainException("This replacement is unavailable. Choose an available alternative.");
+                    }
+                }
+                return;
+            default:
+                throw new DomainException("Choose a refund or replacement resolution.", 400);
+        }
+    }
+
+    private async Task<SqliteConnection> OpenAsync(CancellationToken ct = default)
+    {
+        var db = new SqliteConnection(connectionString);
+        try
+        {
+            await db.OpenAsync(ct);
+            return db;
+        }
+        catch
+        {
+            await db.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static ReturnCase ReadCase(SqliteDataReader reader) => new(
+        reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+        reader.GetString(4), reader.GetString(5), reader.GetInt64(6) / 100m, reader.GetString(7),
+        reader.GetString(8), reader.GetString(9),
+        reader.IsDBNull(10) ? (Resolution?)null : JsonSerializer.Deserialize<Resolution>(reader.GetString(10), JsonSerializerOptions.Web));
+
+    private static async Task<ReturnCase?> FindCaseAsync(
+        SqliteConnection db, SqliteTransaction? transaction, int orderId, CancellationToken ct)
+    {
+        await using var command = db.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT * FROM Orders WHERE Id = $order";
+        command.Parameters.AddWithValue("$order", orderId);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct) ? ReadCase(reader) : null;
+    }
+
+    private static async Task<ResolutionDraft?> FindDraftAsync(
+        SqliteConnection db, SqliteTransaction? transaction, Guid id, CancellationToken ct)
+    {
+        await using var command = db.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT OrderId, ResolutionJson, CreatedAt, ConfirmedAt FROM Drafts WHERE Id = $id";
+        command.Parameters.AddWithValue("$id", id.ToString());
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            return null;
+        }
+        return new(id, reader.GetInt32(0),
+            JsonSerializer.Deserialize<Resolution>(reader.GetString(1), JsonSerializerOptions.Web),
+            DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture),
+            reader.IsDBNull(3) ? null : DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture));
+    }
+
+    private static async Task AddAuditAsync(
+        SqliteConnection db, SqliteTransaction transaction, int orderId, string actor, string action, CancellationToken ct)
+    {
+        await using var command = db.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "INSERT INTO Audit (OrderId, Actor, Action, Timestamp) VALUES ($order, $actor, $action, $now)";
+        command.Parameters.AddWithValue("$order", orderId);
+        command.Parameters.AddWithValue("$actor", actor);
+        command.Parameters.AddWithValue("$action", action);
+        command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task SeedAsync(SqliteConnection db)
+    {
+        using var transaction = db.BeginTransaction();
+        await using var command = db.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            DELETE FROM Audit;
+            DELETE FROM Drafts;
+            DELETE FROM Orders;
+            DELETE FROM Inventory;
+            INSERT INTO Inventory VALUES
+                ('DOCK-PRO', 'USB-C Dock Pro', 'Original model / dual 4K / 90W charging', 0),
+                ('DOCK-PRO-PLUS', 'USB-C Dock Pro+', 'Compatible upgrade / dual 4K / 100W charging', 12);
+            INSERT INTO Orders (Id, Customer, Company, Email, Product, ProductCode, PaidCents, Address, Reason) VALUES
+                (48021, 'Alex Morgan', 'Northstar Design', 'alex@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
+                 '120 Market Street, Seattle, WA 98101', 'External displays disconnect intermittently. Customer requested an exchange.'),
+                (48022, 'Jordan Lee', 'Contoso Studio', 'jordan@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
+                 '75 Pine Street, Portland, OR 97204', 'Incorrect model ordered. Customer prefers a refund.'),
+                (48023, 'Sam Rivera', 'Fabrikam Labs', 'sam@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
+                 '220 Lake Avenue, Bellevue, WA 98004', 'Power adapter is not working. Replacement requested.');
+            INSERT INTO Audit (OrderId, Actor, Action, Timestamp) VALUES
+                (48021, 'eShop Orders (seed)', 'Order delivered', '2026-10-22T09:30:00+00:00'),
+                (48021, 'Customer (seed)', 'Return requested: intermittent display connection', '2026-10-28T15:20:00+00:00'),
+                (48021, 'Customer service (seed)', 'Return approved within the 30-day policy', '2026-10-29T08:45:00+00:00');
+            """;
+        await command.ExecuteNonQueryAsync();
+        transaction.Commit();
+    }
+
+    public void Dispose() => writer.Dispose();
+}

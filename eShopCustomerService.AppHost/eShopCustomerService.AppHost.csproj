@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.6.4" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsAspireHost>true</IsAspireHost>
+    <AspireUseCliBundle>true</AspireUseCliBundle>
+    <UserSecretsId>3adb0b37-7a17-4704-9774-54fc35478dc3</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.4" />
+    <ProjectReference Include="..\eShopCustomerService.Web\eShopCustomerService.Web.csproj" />
+    <ProjectReference Include="..\eShopCustomerService.CrossOrigin\eShopCustomerService.CrossOrigin.csproj" />
+  </ItemGroup>
+
+</Project>

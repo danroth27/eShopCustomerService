@@ -1,0 +1,84 @@
+@page "/returns/{OrderId:int}"
+@attribute [Authorize(Policy = "CustomerService")]
+@rendermode InteractiveServer
+@inject ReturnStore Store
+
+<PageTitle>Return #@OrderId | eShop</PageTitle>
+
+<a class="back-link" href="/"><span aria-hidden="true">&larr;</span> Returns queue</a>
+@if (item is null)
+{
+    <section class="panel empty-state"><h1>@(loaded ? "Return not found" : "Loading return...")</h1><p>@(loaded ? "Choose an order from the returns queue." : "Retrieving the order and activity history.")</p></section>
+}
+else
+{
+    <div class="page-heading detail-heading">
+        <div><div class="heading-meta"><span class="eyebrow">RETURN / ORDER #@item.OrderId</span><span class="badge @(item.Status == "Resolved" ? "success" : "warning")">@item.Status</span></div>
+            <h1>@(item.Status == "Resolved" ? "A resolution, confirmed." : "Find the right resolution.")</h1><p>@item.Customer <span class="separator">/</span> @item.Company</p></div>
+        <a class="button secondary" href="/contracts"><Icon Name="code" /> API workspace</a>
+    </div>
+    @if (item.Status == "Resolved")
+    {
+        <div class="notice success" role="status"><Icon Name="check" /><span>The return is resolved and the activity history is up to date. No real payment or shipment was processed.</span></div>
+    }
+    <div class="workspace-grid">
+        <div class="order-context">
+            <section class="panel product-panel">
+                <div class="panel-heading"><h2>Order details</h2><span class="badge neutral">Delivered</span></div>
+                <ProductArtwork />
+                <div class="product-title"><div><span class="eyebrow">ORIGINAL PURCHASE</span><h2>@item.Product</h2><code>@item.ProductCode</code></div><strong>@item.PaidAmount.ToString("C", CultureInfo.GetCultureInfo("en-US"))</strong></div>
+                <dl class="facts"><div><dt>Quantity</dt><dd>1 unit</dd></div><div><dt>Return policy</dt><dd>30 days / eligible</dd></div><div><dt>Payment reference</dt><dd>PAY-@item.OrderId</dd></div></dl>
+                <div class="customer-note"><span class="eyebrow">CUSTOMER'S REASON</span><p>@item.Reason</p></div>
+            </section>
+            <section class="panel customer-panel">
+                <h2>Customer</h2>
+                <div class="representative"><span class="avatar">@Initials(item.Customer)</span><div><strong>@item.Customer</strong><span>@item.Company</span></div></div>
+                <dl class="facts"><div><dt>Email</dt><dd>@item.Email</dd></div><div><dt>Delivery address</dt><dd>@item.DeliveryAddress</dd></div></dl>
+            </section>
+        </div>
+        <div class="resolution-column">
+            @if (item.Resolution is { } resolution)
+            {
+                <section class="panel completed-panel">
+                    <div class="panel-heading"><h2>Confirmed resolution</h2><span class="badge success"><Icon Name="check" /> Complete</span></div>
+                    <ResolutionSummary Value="resolution" />
+                    <div class="notice subtle"><Icon Name="shield" /><span>The resolution and audit entry were committed together.</span></div>
+                    <a class="button secondary" href="/">Back to queue <Icon Name="arrow" /></a>
+                </section>
+            }
+            else
+            {
+                <ResolutionEditor Order="item" @key="item.OrderId" />
+            }
+            <section class="panel activity-panel">
+                <div class="panel-heading"><h2>Activity history</h2><span class="badge neutral">Recorded</span></div>
+                @if (audit.Count == 0)
+                {
+                    <p class="muted">No activity has been recorded for this return.</p>
+                }
+                <ol class="timeline">
+                    @foreach (var entry in audit)
+                    {
+                        <li @key="entry.Id"><span class="timeline-marker"></span><strong>@entry.Action</strong><p>@entry.Actor <span class="separator">/</span> @entry.Timestamp.ToLocalTime().ToString("MMM d, h:mm tt", CultureInfo.InvariantCulture)</p></li>
+                    }
+                </ol>
+            </section>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int OrderId { get; set; }
+    private ReturnCase? item;
+    private IReadOnlyList<AuditEntry> audit = [];
+    private bool loaded;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        item = await Store.GetCaseAsync(OrderId);
+        audit = await Store.GetAuditAsync(OrderId);
+        loaded = true;
+    }
+
+    private static string Initials(string name) => string.Concat(name.Split(' ').Select(part => part[0]));
+}
