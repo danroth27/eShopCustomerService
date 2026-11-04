@@ -35,20 +35,20 @@ Demo reset requires an authenticated, same-origin form submission and resets onl
 
 ## Authentication and security boundaries
 
-Use an explicitly labeled, Development-only local representative sign-in, a protected cookie, and a customer-service authorization policy on reads and writes. This is not a production identity system. Derive audit actors from the authenticated principal, never request JSON.
+Use an explicitly labeled, Development-only local representative sign-in, a protected cookie, and a customer-service authorization policy on order and draft reads and writes. This is not a production identity system. Derive audit actors from the authenticated principal, never request JSON. The two fixed union examples, the validation-only endpoint, and the generated OpenAPI document are anonymous so Visual Studio's `Demo.http` needs no authentication setup. These examples must not mutate orders, inventory, or audit history.
 
-The confirmation endpoint binds a form and relies on .NET 11's automatic CSRF protection. Do not opt it out or add a competing token requirement that obscures the demonstration. JSON-only endpoints are independently authenticated, authorized, and validated; do not claim automatic form protection enforces JSON requests.
+The confirmation endpoint binds a form and relies on .NET 11's automatic CSRF protection. Do not opt it out or add a competing token requirement that obscures the demonstration. JSON workflow endpoints are independently authenticated, authorized, and validated; do not claim automatic form protection enforces JSON requests. The anonymous validation-only endpoint runs the shared rule without saving a draft or allocating inventory.
 
 The cross-origin test uses a top-level form navigation. Its test cookie must be available to the browser on that request so a 400 can be attributed to form protection rather than a sign-in redirect. Any demonstration-only cookie settings must be documented. Do not expose the demo to a network or deploy it as production software.
 
 ## Presenter flow
 
-1. Sign in with the seeded local representative and open return 48021.
-2. Show refund and replacement JSON examples and the generated union schema.
+1. Before presenting, enter the browser's seeded demo workspace, reset its data, and open return 48021. Authentication is not a talk-track topic.
+2. In Visual Studio, show the union and Minimal APIs, then use requests 1-3 in `eShopCustomerService.Web\Demo.http` to show real refund and replacement JSON and the generated union schema.
 3. Select the unavailable docking station. Show pending validation and its inline error.
-4. Submit the same invalid replacement through the Minimal API. Observe its automatic validation response.
+4. Show the shared attribute and Blazor validator. Use requests 4-5 in `Demo.http` to observe automatic HTTP 400 validation for the unavailable model and HTTP 200 for the available alternative.
 5. Select the available alternative and save a draft.
-6. Open the review screen; copy its draft ID into the cross-origin test form. The rejected attempt must not mutate application state.
+6. From the review screen, open the cross-origin test using its link, which supplies the current draft ID. Show the browser's actual rejected POST; the attempt must not mutate application state.
 7. Confirm from the legitimate review screen. Show the typed completed summary and audit history.
 8. Reset for rehearsal using the authenticated reset control.
 

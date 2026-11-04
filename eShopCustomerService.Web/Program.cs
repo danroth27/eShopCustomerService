@@ -99,31 +99,35 @@ app.MapPost("/returns/confirm", async (
     }
 }).RequireAuthorization("CustomerService").ExcludeFromDescription();
 
-var api = app.MapGroup("/api").RequireAuthorization("CustomerService");
-api.MapGet("/returns", (ReturnStore store, CancellationToken ct) => store.GetCasesAsync(ct));
-api.MapGet("/returns/{orderId:int}", async (int orderId, ReturnStore store, CancellationToken ct) =>
+var api = app.MapGroup("/api");
+var protectedApi = api.MapGroup("").RequireAuthorization("CustomerService");
+protectedApi.MapGet("/returns", (ReturnStore store, CancellationToken ct) => store.GetCasesAsync(ct));
+protectedApi.MapGet("/returns/{orderId:int}", async (int orderId, ReturnStore store, CancellationToken ct) =>
     await store.GetCaseAsync(orderId, ct) is { } result ? Results.Ok(result) : Results.NotFound())
     .Produces<ReturnCase>().Produces(StatusCodes.Status404NotFound);
-api.MapGet("/returns/{orderId:int}/audit", (int orderId, ReturnStore store, CancellationToken ct) =>
+protectedApi.MapGet("/returns/{orderId:int}/audit", (int orderId, ReturnStore store, CancellationToken ct) =>
     store.GetAuditAsync(orderId, ct));
-api.MapGet("/inventory", (ReturnStore store, CancellationToken ct) => store.GetInventoryAsync(ct));
-api.MapGet("/drafts/{id:guid}", async (Guid id, ReturnStore store, CancellationToken ct) =>
+protectedApi.MapGet("/inventory", (ReturnStore store, CancellationToken ct) => store.GetInventoryAsync(ct));
+protectedApi.MapGet("/drafts/{id:guid}", async (Guid id, ReturnStore store, CancellationToken ct) =>
     await store.GetDraftAsync(id, ct) is { } draft ? Results.Ok(draft) : Results.NotFound())
     .Produces<ResolutionDraft>().Produces(StatusCodes.Status404NotFound);
-
-api.MapGet("/examples/refund", () => new Resolution(new RefundResolution(149m, "PAY-48021")));
-api.MapGet("/examples/replacement", () => new Resolution(new ReplacementResolution(
-    "DOCK-PRO-PLUS", "120 Market Street, Seattle, WA 98101")));
-api.MapPost("/replacements/validate", (ReplacementRequest request) =>
-    TypedResults.Ok(new { valid = true, message = "Replacement request passed asynchronous inventory validation." }));
-api.MapPost("/drafts", async (
+protectedApi.MapPost("/drafts", async (
     SaveResolutionRequest request, ReturnStore store, ClaimsPrincipal user, CancellationToken ct) =>
 {
     var draft = await store.SaveDraftAsync(request, user.Identity!.Name!, ct);
     return TypedResults.Created($"/api/drafts/{draft.Id}", draft);
 });
 
-app.MapOpenApi().RequireAuthorization("CustomerService");
+// Minimal APIs + C# unions
+api.MapGet("/examples/refund", () => new Resolution(new RefundResolution(149m, "PAY-48021")));
+api.MapGet("/examples/replacement", () => new Resolution(new ReplacementResolution(
+    "DOCK-PRO-PLUS", "120 Market Street, Seattle, WA 98101")));
+
+// Minimal APIs + async validation
+api.MapPost("/replacements/validate", (ReplacementRequest request) =>
+    TypedResults.Ok(new { valid = true, message = "Replacement request passed asynchronous inventory validation." }));
+
+app.MapOpenApi();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 await app.Services.GetRequiredService<ReturnStore>().InitializeAsync();

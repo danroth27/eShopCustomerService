@@ -1,4 +1,4 @@
-@switch (Value.Value)
+@switch (Resolution.Value)
 {
     case RefundResolution refund:
         <div class="resolution-summary">
@@ -22,5 +22,5 @@
 }
 
 @code {
-    [Parameter, EditorRequired] public Resolution Value { get; set; }
+    [Parameter, EditorRequired] public Resolution Resolution { get; set; }
 }

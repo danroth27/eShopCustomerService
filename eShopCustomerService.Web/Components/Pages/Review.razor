@@ -16,7 +16,7 @@ else
         <section class="panel review-panel">
             <div class="panel-heading"><h2>Resolution for order #@draft.OrderId</h2><span class="badge @(draft.ConfirmedAt is null ? "warning" : "success")">@(draft.ConfirmedAt is null ? "Draft" : "Confirmed")</span></div>
             <div class="review-customer"><span class="eyebrow">CUSTOMER</span><h3>@item.Customer</h3><p>@item.Company</p></div>
-            <ResolutionSummary Value="draft.Resolution" />
+            <ResolutionSummary Resolution="draft.Resolution" />
             @if (!string.IsNullOrEmpty(Error))
             {
                 <div class="notice error" role="alert">@Error</div>

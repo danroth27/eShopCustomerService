@@ -24,23 +24,42 @@ public sealed class ReturnsTests
     }
 
     [Fact]
-    public async Task Api_requires_a_representative_session()
+    public async Task Return_workflow_requires_a_representative_session()
     {
         using var factory = new DemoFactory();
         using var client = factory.Browser();
         using var response = await client.GetAsync("/api/returns");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var draft = await client.PostAsJsonAsync("/api/drafts", new SaveResolutionRequest(48021,
+            new Resolution(new ReplacementResolution("DOCK-PRO-PLUS", "120 Market Street"))));
+        Assert.Equal(HttpStatusCode.Unauthorized, draft.StatusCode);
         using var confirmation = await client.PostAsync("/returns/confirm", Form(Guid.NewGuid()));
         Assert.Equal(HttpStatusCode.Redirect, confirmation.StatusCode);
         Assert.Equal("/sign-in", confirmation.Headers.Location!.AbsolutePath);
     }
 
-    [Fact]
-    public async Task Minimal_api_awaits_the_shared_inventory_rule()
+    [Theory]
+    [InlineData("/api/examples/refund", typeof(RefundResolution))]
+    [InlineData("/api/examples/replacement", typeof(ReplacementResolution))]
+    public async Task Union_examples_work_without_a_representative_session(string path, Type expectedCase)
     {
         using var factory = new DemoFactory();
         using var client = factory.Browser();
-        await DemoFactory.SignInAsync(client);
+        using var response = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var resolution = await response.Content.ReadFromJsonAsync<Resolution>();
+        Assert.IsType(expectedCase, resolution.Value);
+    }
+
+    [Fact]
+    public async Task Anonymous_validation_awaits_the_shared_inventory_rule_without_mutating_state()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var initialReturn = await store.GetCaseAsync(48021);
+        var initialInventory = await store.GetInventoryAsync();
+        var initialAudit = await store.GetAuditAsync(48021);
         using var unavailable = await client.PostAsJsonAsync("/api/replacements/validate", new ReplacementRequest
         {
             OrderId = 48021,
@@ -57,6 +76,9 @@ public sealed class ReturnsTests
             DeliveryAddress = "120 Market Street"
         });
         Assert.Equal(HttpStatusCode.OK, available.StatusCode);
+        Assert.Equal(initialReturn, await store.GetCaseAsync(48021));
+        Assert.Equal(initialInventory, await store.GetInventoryAsync());
+        Assert.Equal(initialAudit, await store.GetAuditAsync(48021));
     }
 
     [Fact]
@@ -64,7 +86,6 @@ public sealed class ReturnsTests
     {
         using var factory = new DemoFactory();
         using var client = factory.Browser();
-        await DemoFactory.SignInAsync(client);
         using var response = await client.GetAsync("/openapi/v1.json");
         response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());

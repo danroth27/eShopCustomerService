@@ -1,0 +1,45 @@
+# Start the app with Aspire before sending requests.
+# Use the HTTPS customerservice URL from the Aspire dashboard.
+# These Development-only examples need no sign-in or cookies.
+# Validation does not save a draft, reserve inventory, or confirm a return.
+@host = https://localhost:7153
+
+### 1. Refund case: 200 OK with amount and paymentReference, no union wrapper.
+# @name refund
+GET {{host}}/api/examples/refund
+Accept: application/json
+
+### 2. Replacement case: 200 OK with productCode and deliveryAddress.
+# @name replacement
+GET {{host}}/api/examples/replacement
+Accept: application/json
+
+### 3. Generated contract: OpenAPI 3.2.0 and components.schemas.Resolution.anyOf.
+# Search the response for "Resolution" and show its two case references.
+# @name openApi
+GET {{host}}/openapi/v1.json
+Accept: application/json
+
+### 4. Unavailable model: 400 Bad Request with errors.ProductCode.
+# @name unavailableReplacement
+POST {{host}}/api/replacements/validate
+Content-Type: application/json
+Accept: application/json
+
+{
+  "orderId": 48021,
+  "productCode": "DOCK-PRO",
+  "deliveryAddress": "120 Market Street, Seattle, WA 98101"
+}
+
+### 5. Available model: 200 OK with valid: true. No inventory is allocated.
+# @name availableReplacement
+POST {{host}}/api/replacements/validate
+Content-Type: application/json
+Accept: application/json
+
+{
+  "orderId": 48021,
+  "productCode": "DOCK-PRO-PLUS",
+  "deliveryAddress": "120 Market Street, Seattle, WA 98101"
+}
