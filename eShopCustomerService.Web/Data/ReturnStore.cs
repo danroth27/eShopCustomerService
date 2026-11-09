@@ -338,11 +338,16 @@ public sealed class ReturnStore : IDisposable
                 (48022, 'Jordan Lee', 'Contoso Studio', 'jordan@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
                  '75 Pine Street, Portland, OR 97204', 'Incorrect model ordered. Customer prefers a refund.'),
                 (48023, 'Sam Rivera', 'Fabrikam Labs', 'sam@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
-                 '220 Lake Avenue, Bellevue, WA 98004', 'Power adapter is not working. Replacement requested.');
+                 '220 Lake Avenue, Bellevue, WA 98004', 'Power adapter is not working. Replacement requested.'),
+                (48024, 'Taylor Chen', 'Adventure Works', 'taylor@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
+                 '410 Cedar Street, Seattle, WA 98101', 'Delivery delayed. Tracking has not changed for five days. Customer needs a working dock for a workshop.');
             INSERT INTO Audit (OrderId, Actor, Action, Timestamp) VALUES
                 (48021, 'eShop Orders (seed)', 'Order delivered', '2026-10-22T09:30:00+00:00'),
                 (48021, 'Customer (seed)', 'Return requested: intermittent display connection', '2026-10-28T15:20:00+00:00'),
-                (48021, 'Customer service (seed)', 'Return approved within the 30-day policy', '2026-10-29T08:45:00+00:00');
+                (48021, 'Customer service (seed)', 'Return approved within the 30-day policy', '2026-10-29T08:45:00+00:00'),
+                (48024, 'eShop Orders (seed)', 'Order dispatched; tracking DEMO-48024', '2026-11-02T09:30:00+00:00'),
+                (48024, 'Carrier (seed)', 'Delayed at Seattle hub; no new scan for five days', '2026-11-03T10:00:00+00:00'),
+                (48024, 'Customer service (seed)', 'Replacement eligible under the seeded delayed-delivery policy', '2026-11-08T09:00:00+00:00');
             """;
         await command.ExecuteNonQueryAsync();
         transaction.Commit();

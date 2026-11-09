@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using eShopCustomerService.Web.Agentic;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,7 +25,7 @@ builder.Services.AddSingleton<DemoAuthentication>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
 {
     options.LoginPath = "/sign-in";
-    options.Cookie.Name = "eShop.CustomerService.Demo";
+    options.Cookie.Name = builder.Configuration["Demo:CookieName"] ?? "eShop.CustomerService.Demo";
     options.Cookie.HttpOnly = true;
     options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
     options.Cookie.SameSite = SameSiteMode.Lax;
@@ -56,11 +57,13 @@ builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddSingleton<ReturnStore>();
 builder.Services.AddSingleton<InventoryService>();
+builder.Services.AddCustomerServiceAgent(builder.Configuration);
 
 var app = builder.Build();
 app.UseExceptionHandler();
 app.UseAuthentication();
 app.UseAuthorization();
+app.MapCustomerServiceAgent();
 app.MapStaticAssets();
 app.MapDefaultEndpoints();
 

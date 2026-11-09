@@ -1,12 +1,12 @@
 # eShop Customer Service
 
-A focused returns-and-exchanges workspace showing web development features in **.NET 11**: C# unions with JSON and OpenAPI, shared asynchronous validation in Blazor and Minimal APIs, automatic CSRF protection for form submissions, and authentication refresh without reconnecting.
+A focused returns-and-exchanges workspace showing web development features in **.NET 11**: C# unions with JSON and OpenAPI, shared asynchronous validation in Blazor and Minimal APIs, automatic CSRF protection for form submissions, authentication refresh without reconnecting, and an optional agentic workspace built with the experimental Blazor AI components.
 
 This is a self-contained companion scenario for [dotnet/eShop](https://github.com/dotnet/eShop), not an upstream extension or a connected deployment. Its fictional orders and inventory are stored locally. It does not call eShop services, issue payments, or create shipments. See [SPEC.md](SPEC.md) for the application specification.
 
 ## Run locally
 
-Use the stable .NET 11 SDK (`11.0.100` or later) and the [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6. No containers or cloud services are required.
+Use the stable .NET 11 SDK (`11.0.100` or later) and the [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6. No containers or cloud services are required for the core workflows; the optional agent workspace requires a Microsoft Foundry model.
 
 ```powershell
 aspire start
@@ -86,6 +86,36 @@ Open **Service queue** from the navigation or **Virtualized service queue** in t
 
 Show `Components\Pages\ServiceQueue.razor`: `Items`, `AnchorMode`, and `ScrollToItemAsync` are framework APIs. Row-height measurement and scroll restoration are not implemented with custom JavaScript. `ItemSize` supplies an initial estimate, not a fixed row height. Programmatic jumps disengage active following in this SDK; select the desired edge policy after jumping, changing through **Neither edge** if that policy was already selected. For the live talk, use the jump, preceding-row expansion, middle-of-list prepend, and end-follow steps; no database reset is needed.
 
+## Agentic customer-service demo
+
+The **Agent workspace** follows delayed-delivery case **48024**, separate from the other talks' primary return. It uses a live Microsoft Foundry model through Microsoft Agent Framework, the AG-UI HTTP/SSE protocol, and the experimental Blazor AI components. The UI and `MapAGUIServer` endpoint stay in the existing Web host to reuse authenticated sessions, SQLite drafts, and confirmation rules.
+
+Configure an existing Foundry resource endpoint and deployed model in the AppHost's user secrets. Use the resource's root URL, not a project URL or a URL ending in `openai/v1/`; that suffix is added by the application. Authenticate using an Azure identity with inference access to that resource (`DefaultAzureCredential` is used; no API key is needed). Requests may incur model charges.
+
+```powershell
+dotnet user-secrets set "Parameters:agentic-foundry-endpoint" "https://<resource>.services.ai.azure.com/" --project eShopCustomerService.AppHost
+dotnet user-secrets set "Parameters:agentic-foundry-model" "<deployed-model-name>" --project eShopCustomerService.AppHost
+az login
+aspire start --isolated --non-interactive
+aspire wait customerservice --non-interactive
+aspire describe --non-interactive
+```
+
+Use isolated mode when other eShop checkouts are running. Discover this instance's HTTPS address through Aspire, enter its demo workspace, and use **Reset demo data** in its overview before rehearsing. Each worktree has its own database. A Foundry-enabled AppHost also uses the distinct `eShop.CustomerService.Agentic` cookie so localhost demo sessions do not collide. Stop only this worktree's AppHost before rebuilding. Without Foundry configuration, the rest of the app still runs and the agent page displays setup guidance.
+
+1. Open **Agent workspace** (`/agentic/48024`). Select **Investigate** and show incremental rendering, the formatted Markdown recommendation, and the backend evidence card: the original model has no stock; the compatible upgrade has 12 units.
+2. Select **Prepare replacement**. The shared plan becomes **Draft**, while inventory remains uncommitted and the proposed reply remains unsent.
+3. Edit the delivery address to `200 Demo Way, Seattle, WA 98101`. Ask: `Update the saved replacement draft using my edited delivery address. Make the customer reply warm and mention the workshop. Do not confirm it.` The next AG-UI request carries the edited workspace state.
+4. Select **Show review**, then **Open resolution review** on the agent-requested frontend action. A Razor/C# function opens the current draft's read-only review and returns its result to the agent through AG-UI. Close the review and wait for **Ready**. Reviewing does not authorize confirmation.
+5. Select **Request approval**, inspect the exact product and address, and **Reject**. The interface shows rejection and returns to **Ready**; the draft remains uncommitted.
+6. Request approval again and select **Approve replacement**. The server revalidates the authenticated representative, draft ownership, approved details, eligibility, and stock. Show **Resolved**, then the existing order page's resolution and audit history. Exactly one unit is allocated locally.
+
+Complete the frontend review before requesting approval in the same conversation, without reloading. AGUI.Server 1.0.1 can suppress backend approval interrupts when a frontend tool is declared but has not completed ([#2393](https://github.com/ag-ui-protocol/ag-ui/issues/2393)). This demo sequence avoids the observed path; it is not an SDK fix or a general protocol requirement. The sample does not add a protocol shim.
+
+Rich text uses Markdig with a small mapper into the components' `RichTextContent` nodes. Original Markdown stays in history; paragraphs, headings, lists, emphasis, and code are formatted. Unsupported syntax stays literal, including raw HTML. Frontend review needs no JavaScript; the small collocated JS module only follows transcript output while the representative is reading at the bottom.
+
+**Boundaries:** carrier activity and all customer data are seeded; there are no real carrier calls, shipments, emails, or payments. Draft and confirmation persistence and inventory allocation are real local operations. The approval UI is not authorization: each AG-UI request revalidates the current representative, and tools derive their actor and selected case from the authenticated HTTP request. MAF's in-memory session store retains the genuine pending approval for continuation, partitioned by the authenticated demo session and selected case; do not replace it with the no-op store or disable approval binding. Workspace state synchronizes at request boundaries, not between browsers. Conversation and pending approvals are page-local and do not survive reloads or restarts. Foundry supplies model inference; this demo does not deploy a Foundry Hosted Agent or implement an AG-UI-to-Invocations bridge. Experimental warnings remain visible.
+
 ## Code landmarks
 
 | Story | File |
@@ -103,6 +133,12 @@ Show `Components\Pages\ServiceQueue.razor`: `Items`, `AnchorMode`, and `ScrollTo
 | HTTP permission controls, outside the live circuit | `eShopCustomerService.Web\Components\Pages\AuthRefresh.razor` |
 | Resource orchestration and endpoint discovery | `eShopCustomerService.AppHost\AppHost.cs` |
 | Variable-height queue, anchor policies, and jump-to-row | `eShopCustomerService.Web\Components\Pages\ServiceQueue.razor` |
+| Chat, typed evidence cards, shared workspace, and approval rendering | `eShopCustomerService.Web\Components\Pages\AgentWorkspace.razor` |
+| Markdown-to-rich-text mapping at the streaming boundary | `eShopCustomerService.Web\Agentic\MarkdownChatClient.cs` |
+| Foundry-backed MAF agent and authenticated AG-UI endpoint | `eShopCustomerService.Web\Agentic\AgentHosting.cs` |
+| Case-bound tools and existing draft/confirmation rules | `eShopCustomerService.Web\Agentic\CaseTools.cs` |
+| Current workspace state carried into each agent request | `eShopCustomerService.Web\Agentic\CaseStateAgent.cs` |
+| Authenticated server-side loopback AG-UI transport | `eShopCustomerService.Web\Agentic\AgentConnection.cs` |
 
 Inventory lookup includes a configurable 650 ms presentation delay (`Demo:ValidationDelayMilliseconds`). Availability still comes from SQLite. Validation faults do not count as successful checks. Confirmation always rechecks the business invariants inside its transaction.
 
