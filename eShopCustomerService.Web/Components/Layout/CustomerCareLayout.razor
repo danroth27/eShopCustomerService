@@ -1,0 +1,22 @@
+@inherits LayoutComponentBase
+
+<div class="care-shell">
+    <header class="care-header">
+        <a class="brand" href="/care" aria-label="eShop customer care home">
+            <span class="brand-mark"><Icon Name="bag" /></span>
+            <span>eShop<span class="brand-subtitle">CUSTOMER CARE</span></span>
+        </a>
+        <nav aria-label="Customer care">
+            <NavLink href="/care" Match="NavLinkMatch.All">Welcome</NavLink>
+            <NavLink href="/care/help">Help library</NavLink>
+            <NavLink href="/care/policy">Returns policy</NavLink>
+            <a class="button" href="/care/request">Start a return</a>
+        </nav>
+    </header>
+    <main id="main-content" class="care-main">@Body</main>
+    <footer class="app-footer">
+        <span>eShop Customer Care <span class="separator">/</span> .NET 11</span>
+        <span>Fictional data. No payments or shipments are processed.</span>
+        <a href="/returns">Representative workspace</a>
+    </footer>
+</div>

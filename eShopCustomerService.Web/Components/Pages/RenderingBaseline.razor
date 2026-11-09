@@ -1,0 +1,32 @@
+@page "/rendering-baseline/{OrderId:int}"
+@attribute [Authorize(Policy = "CustomerService")]
+@rendermode InteractiveServer
+@inject ResolutionContextLoader ContextLoader
+
+<PageTitle>Rendering handoff | eShop</PageTitle>
+<div class="page-heading"><div><span class="eyebrow">PRERENDERING BASELINE</span><h1>The same context, loaded twice.</h1><p>This diagnostic view deliberately does not persist its initialization result.</p></div></div>
+<section class="panel">
+    @if (context is null)
+    {
+        <p>@(loaded ? "The order was not found." : "Loading the customer context...")</p>
+    }
+    else
+    {
+        <h2>@context.Order.Customer / @context.Order.Product</h2>
+        <p>Context load <strong data-testid="baseline-load">@context.Load</strong>.</p>
+        <p>During the full-page prerender-to-interactive handoff, the load marker changes because this component calls the same service again.</p>
+        <a class="button" href="/returns/@OrderId?continuity=true">Open the persistent resolution view</a>
+    }
+</section>
+
+@code {
+    [Parameter] public int OrderId { get; set; }
+    private ResolutionContext? context;
+    private bool loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        context = await ContextLoader.LoadAsync(OrderId);
+        loaded = true;
+    }
+}

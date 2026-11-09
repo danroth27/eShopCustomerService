@@ -13,6 +13,7 @@
         })();
     </script>
     <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["eShopCustomerService.Web.styles.css"]" />
     <ImportMap />
     <link rel="icon" type="image/svg+xml" href="brand.svg" />
     <HeadOutlet />
@@ -20,7 +21,9 @@
 
 <body>
     <Routes />
+    <eShopCustomerService.Web.Components.Layout.ReconnectModal />
     <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script type="module" src="@Assets["session-operations.js"]"></script>
 </body>
 
 </html>

@@ -1,0 +1,30 @@
+.operations-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 24px;
+    padding: 12px 0 24px;
+}
+
+.operations-metrics span {
+    display: block;
+    margin-bottom: 8px;
+}
+
+.operations-metrics strong {
+    font-size: 36px;
+}
+
+.operations-actions {
+    display: flex;
+    gap: 12px;
+    margin: 24px 0;
+}
+
+@media (max-width: 720px) {
+    .operations-metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .operations-actions {
+        flex-direction: column;
+    }
+}

@@ -1,9 +1,21 @@
 @page "/returns/{OrderId:int}"
 @attribute [Authorize(Policy = "CustomerService")]
 @rendermode InteractiveServer
-@inject ReturnStore Store
+@inject ResolutionContextLoader ContextLoader
 
 <PageTitle>Return #@OrderId | eShop</PageTitle>
+
+@if (ContinuityDemo)
+{
+    <ConfigureBrowser Options="@ContinuityOptions" />
+    <section class="panel">
+        <span class="eyebrow">SESSION CONTINUITY</span>
+        <h2>Load once. Keep the work.</h2>
+        <p>Context load <strong data-testid="context-load">@Context?.Load</strong>. This view reuses its prerendered context and preserves selected unsaved editor state.</p>
+        <p class="muted">Inactivity pause is enabled for this view with an eight-second hidden-tab delay. Preview your unsaved resolution before hiding the tab.</p>
+        <a href="/operations" target="_blank" rel="noopener">Open session operations</a>
+    </section>
+}
 
 <a class="back-link" href="/"><span aria-hidden="true">&larr;</span> Returns queue</a>
 @if (item is null)
@@ -48,7 +60,7 @@ else
             }
             else
             {
-                <ResolutionEditor Order="item" @key="item.OrderId" />
+                <ResolutionEditor Order="item" ContinuityDemo="ContinuityDemo" @key="item.OrderId" />
             }
             <section class="panel activity-panel">
                 <div class="panel-heading"><h2>Activity history</h2><span class="badge neutral">Recorded</span></div>
@@ -69,15 +81,30 @@ else
 
 @code {
     [Parameter] public int OrderId { get; set; }
-    private ReturnCase? item;
-    private IReadOnlyList<AuditEntry> audit = [];
+    [SupplyParameterFromQuery(Name = "continuity")] public bool ContinuityDemo { get; set; }
+    [PersistentState] public ResolutionContext? Context { get; set; }
+    private ReturnCase? item => Context?.Order;
+    private IReadOnlyList<AuditEntry> audit => Context?.Audit ?? [];
     private bool loaded;
 
     protected override async Task OnParametersSetAsync()
     {
-        item = await Store.GetCaseAsync(OrderId);
-        audit = await Store.GetAuditAsync(OrderId);
+        if (Context is not null && Context.Order.OrderId != OrderId)
+        {
+            Context = null;
+        }
+        Context ??= await ContextLoader.LoadAsync(OrderId);
         loaded = true;
+    }
+
+    private static BrowserOptions ContinuityOptions
+    {
+        get
+        {
+            var options = new BrowserOptions();
+            options.AddAutoPause(pause => pause.HiddenDelay = TimeSpan.FromSeconds(8));
+            return options;
+        }
     }
 
     private static string Initials(string name) => string.Concat(name.Split(' ').Select(part => part[0]));

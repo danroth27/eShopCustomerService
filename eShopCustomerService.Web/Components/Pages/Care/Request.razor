@@ -1,0 +1,68 @@
+@page "/care/request"
+@inject ReturnStore Store
+@inject NavigationManager Navigation
+
+<PageTitle>Start a return | eShop</PageTitle>
+<div class="page-heading"><div><span class="eyebrow">LET'S MAKE IT RIGHT</span><h1>Your return starts here.</h1><p>Tell us what happened. Our care team will review your request and help with the next step.</p></div></div>
+<div class="request-grid">
+    <section class="panel">
+        <ProductArtwork />
+        <h2>USB-C Dock Pro</h2><p>Alex Morgan <span class="separator">/</span> Order #48021</p>
+        <p>This form is for the fictional sample purchase only. Please use demonstration contact details.</p>
+        <a href="/care/policy">Review your return options &rarr;</a>
+    </section>
+    <section class="panel">
+        <EditForm Model="Input" FormName="care-request" OnValidSubmit="SubmitAsync" Enhance>
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+            <input type="hidden" name="Input.OrderId" value="48021" />
+            <div class="field"><label for="care-name"><DisplayName For="@(() => Input!.Name)" /></label><InputText id="care-name" @bind-Value="Input!.Name" autocomplete="name" /><ValidationMessage For="@(() => Input!.Name)" /></div>
+            <div class="field"><label for="care-email"><DisplayName For="@(() => Input!.Email)" /></label><InputText id="care-email" type="email" @bind-Value="Input!.Email" autocomplete="email" /><ValidationMessage For="@(() => Input!.Email)" /></div>
+            <div class="field"><label for="care-message"><DisplayName For="@(() => Input!.Message)" /></label><InputTextArea id="care-message" @bind-Value="Input!.Message" rows="5" /><ValidationMessage For="@(() => Input!.Message)" /></div>
+            @if (failureMessage is not null)
+            {
+                <p class="notice" role="alert">@failureMessage</p>
+            }
+            <div class="editor-footer"><span>Do not include passwords or payment details.</span><button class="button" type="submit">Send return request</button></div>
+        </EditForm>
+        @if (LastRequest is not null)
+        {
+            <p class="session-note">Your session remembers request <strong>@LastRequest</strong>. <a href="/care/received">View confirmation</a></p>
+        }
+    </section>
+</div>
+
+@code {
+    [SupplyParameterFromForm(FormName = "care-request")]
+    private CustomerReturnRequest? Input { get; set; }
+    [SupplyParameterFromTempData(Name = "care-message")]
+    public string? Message { get; set; }
+    [SupplyParameterFromSession(Name = "care-request")]
+    public string? LastRequest { get; set; }
+    [CascadingParameter] public HttpContext? HttpContext { get; set; }
+    private string? failureMessage;
+
+    protected override void OnInitialized()
+    {
+        Input ??= new() { Name = "Alex Morgan", Email = "alex@example.com" };
+        // Set the fixed order before validation, including when form mapping omits or changes it.
+        Input.OrderId = 48021;
+    }
+
+    private async Task SubmitAsync()
+    {
+        Input!.OrderId = 48021;
+        var result = await Store.SubmitCustomerRequestAsync(Input!, HttpContext?.RequestAborted ?? default);
+        switch (result.Value)
+        {
+            case CustomerRequestReceipt receipt:
+                LastRequest = receipt.Reference;
+                Message = $"Thanks, {Input!.Name}. Your return request is saved for our care team.";
+                Navigation.NavigateTo("/care/received");
+                break;
+            case ResolutionFailure failure:
+                failureMessage = failure.Message;
+                break;
+        }
+    }
+}

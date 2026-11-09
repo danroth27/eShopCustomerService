@@ -1,0 +1,10 @@
+.welcome-purchase { display: grid; grid-template-columns: 280px 1fr; align-items: center; gap: 32px; margin-bottom: 24px; }
+.welcome-purchase .eyebrow { display: block; margin-bottom: 12px; }
+.welcome-purchase .button { margin: 0 8px 8px 0; }
+.welcome-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.welcome-options p { font-size: 13px; }
+.welcome-options a { font-size: 13px; font-weight: 600; }
+@media (max-width: 760px) {
+    .welcome-purchase, .welcome-options { grid-template-columns: 1fr; }
+    .welcome-purchase { gap: 16px; }
+}

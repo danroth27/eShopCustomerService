@@ -9,6 +9,8 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Components.Server.Circuits;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -56,11 +58,32 @@ builder.Services.AddOpenApi();
 builder.Services.AddProblemDetails();
 builder.Services.AddSingleton<ReturnStore>();
 builder.Services.AddSingleton<InventoryService>();
+builder.Services.AddSingleton<ResolutionContextLoader>();
+builder.Services.AddSingleton<CircuitMonitor>();
+builder.Services.AddScoped<CircuitHandler, CustomerServiceCircuitHandler>();
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.Cookie.Name = "eShop.CustomerCare.Session";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+    options.IdleTimeout = TimeSpan.FromMinutes(30);
+});
+builder.Services.AddOutputCache(options => options.AddPolicy("PublicHelp",
+    policy => policy.Expire(TimeSpan.FromMinutes(1))));
+builder.Services.AddDataProtection().SetApplicationName("eShopCustomerService.Web");
+if (builder.Configuration["DataProtection:KeyDirectory"] is { Length: > 0 } keyDirectory)
+{
+    builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyDirectory));
+}
+builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(30));
 
 var app = builder.Build();
 app.UseExceptionHandler();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseSession();
+app.UseOutputCache();
 app.MapStaticAssets();
 app.MapDefaultEndpoints();
 
@@ -170,6 +193,21 @@ api.MapPost("/replacements/validate", (ReplacementRequest request) =>
     TypedResults.Ok(new { valid = true, message = "Replacement request passed asynchronous inventory validation." }));
 
 app.MapOpenApi();
+var presenter = app.MapGroup("/presenter").RequireAuthorization("CustomerService").ExcludeFromDescription();
+presenter.MapGet("/metrics", (CircuitMonitor monitor, ResolutionContextLoader loader) => monitor.Snapshot(loader.Loads));
+presenter.MapPost("/drain", (PresenterAction request, CircuitMonitor monitor, CancellationToken ct) =>
+    request.Confirmation == "PAUSE"
+        ? DrainAsync(monitor, ct)
+        : Task.FromResult<IResult>(Results.BadRequest("Pause requires the explicit PAUSE confirmation.")));
+presenter.MapPost("/shutdown", (PresenterAction request, IHostApplicationLifetime lifetime) =>
+{
+    if (request.Confirmation != "STOP")
+    {
+        return Results.BadRequest("Stopping requires the explicit STOP confirmation.");
+    }
+    lifetime.StopApplication();
+    return Results.Accepted();
+});
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode(options =>
     options.ConfigureConnection = connection =>
     {
@@ -180,4 +218,8 @@ app.MapRazorComponents<App>().AddInteractiveServerRenderMode(options =>
 await app.Services.GetRequiredService<ReturnStore>().InitializeAsync();
 app.Run();
 
+static async Task<IResult> DrainAsync(CircuitMonitor monitor, CancellationToken ct) =>
+    Results.Ok(await monitor.DrainAsync(ct));
+
+public sealed record PresenterAction(string Confirmation);
 public partial class Program;

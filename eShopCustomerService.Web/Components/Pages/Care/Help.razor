@@ -1,0 +1,9 @@
+@page "/care/help"
+
+<PageTitle>Help library | eShop</PageTitle>
+<div class="page-heading"><div><span class="eyebrow">ANSWERS AT YOUR PACE</span><h1>Find your next step.</h1><p>Browse setup tips, return guidance, and what to expect after you contact us. Sort or turn the page, then share the link.</p></div></div>
+<CacheView CacheKey="customer-care-library" VaryByQuery="page,sort,direction" ExpiresAfter="TimeSpan.FromMinutes(2)">
+    <CustomerHelpLibrary />
+</CacheView>
+<p class="caption">Public help region cached for two minutes. This request rendered at <time data-testid="request-time">@DateTimeOffset.UtcNow.ToString("HH:mm:ss.fff") UTC</time>.</p>
+<a class="button" href="/care/request">Still need help? Start a return</a>

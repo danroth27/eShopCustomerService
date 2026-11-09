@@ -2,9 +2,9 @@
 @inject NavigationManager Navigation
 @inject ILogger<ResolutionEditor> Logger
 @inject IAuthorizationService Authorization
-@implements IDisposable
+@implements IAsyncDisposable
 
-<section class="panel auth-refresh-panel">
+<section class="panel auth-refresh-panel" data-interactive="@RendererInfo.IsInteractive.ToString().ToLowerInvariant()">
     <div class="panel-heading"><div><span class="eyebrow">LIVE AUTHENTICATION REFRESH</span><h2>Same workspace. Current permissions.</h2></div>
         <AuthorizeView Policy="@DemoAuthentication.RefundPolicy">
             <Authorized><span class="badge success">Refund approval: allowed</span></Authorized>
@@ -12,9 +12,20 @@
         </AuthorizeView>
     </div>
     <p>Permissions update without reloading. Your unsaved delivery address and selected replacement stay here.</p>
-    <div class="auth-refresh-details"><span>Editor instance <code>@editorInstance</code></span>
+    <div class="auth-refresh-details"><span>Editor instance <code data-testid="component-instance">@editorInstance</code></span>
         <a href="/auth-refresh" target="_blank" rel="noopener">Open permission controls <span aria-hidden="true">&nearr;</span></a></div>
 </section>
+@if (Draft.Preview)
+{
+    <section class="panel editor-panel">
+        <div class="panel-heading"><h2>Your unsaved resolution</h2><span class="badge neutral">Preview only</span></div>
+        <ResolutionSummary Resolution="@PreviewResolution" />
+        <p>No database draft, refund, or inventory allocation has been made. These are the working values we want to carry through a paused session.</p>
+        <button class="button secondary" type="button" @onclick="() => Draft.Preview = false">Continue editing</button>
+    </section>
+}
+else
+{
 <section class="panel editor-panel">
     <div class="panel-heading"><div><h2>Resolve this return</h2><p>Choose the outcome that works for the customer.</p></div><span class="step-label">01 / PREPARE</span></div>
     <div class="resolution-choices" role="group" aria-label="Resolution type">
@@ -73,6 +84,10 @@
                     @(saving ? "Saving draft..." : ValidationPending ? "Validating..." : "Review replacement") <Icon Name="arrow" />
                 </button>
             </div>
+            @if (ContinuityDemo)
+            {
+                <button class="button secondary" type="button" @onclick="PreviewAsync" disabled="@(InteractionUnavailable || ValidationPending)">Preview without saving</button>
+            }
         </EditForm>
     }
     else
@@ -90,12 +105,15 @@
         </AuthorizeView>
     }
 </section>
+}
 
 @code {
     [Parameter, EditorRequired] public ReturnCase Order { get; set; } = default!;
+    [Parameter] public bool ContinuityDemo { get; set; }
     [CascadingParameter] private Task<AuthenticationState> AuthenticationState { get; set; } = default!;
-    private string kind = "replacement";
-    private ReplacementRequest model = new();
+    [PersistentState] public ResolutionEditorState Draft { get; set; } = null!;
+    private string kind { get => Draft.Kind; set => Draft.Kind = value; }
+    private ReplacementRequest model => Draft.Replacement;
     private EditContext editContext = default!;
     private IReadOnlyList<InventoryItem> products = [];
     private bool saving;
@@ -107,16 +125,42 @@
 
     protected override async Task OnInitializedAsync()
     {
-        model = new() { OrderId = Order.OrderId, DeliveryAddress = Order.DeliveryAddress };
+        Draft ??= new ResolutionEditorState
+        {
+            Replacement = new() { OrderId = Order.OrderId, DeliveryAddress = Order.DeliveryAddress }
+        };
         editContext = new(model);
         editContext.OnValidationStateChanged += HandleValidationStateChanged;
         products = await Store.GetInventoryAsync();
     }
 
-    private void HandleValidationStateChanged(object? sender, ValidationStateChangedEventArgs args) =>
-        _ = InvokeAsync(StateHasChanged);
+    private async void HandleValidationStateChanged(object? sender, ValidationStateChangedEventArgs args)
+    {
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception exception)
+        {
+            await DispatchExceptionAsync(exception);
+        }
+    }
 
-    public void Dispose() => editContext.OnValidationStateChanged -= HandleValidationStateChanged;
+    public ValueTask DisposeAsync()
+    {
+        editContext.OnValidationStateChanged -= HandleValidationStateChanged;
+        return ValueTask.CompletedTask;
+    }
+
+    private Resolution PreviewResolution => new(new ReplacementResolution(model.ProductCode, model.DeliveryAddress));
+
+    private async Task PreviewAsync()
+    {
+        if (await editContext.ValidateAsync())
+        {
+            Draft.Preview = true;
+        }
+    }
 
     private Task SaveReplacementAsync() => SaveAsync(new Resolution(
         new ReplacementResolution(model.ProductCode, model.DeliveryAddress)));

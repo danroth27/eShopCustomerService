@@ -1,0 +1,35 @@
+@page "/care/help/{Slug}"
+
+<PageTitle>@(article?.Title ?? "Article not found") | eShop</PageTitle>
+<a class="back-link" href="/care/help">&larr; Help library</a>
+@if (article is not null)
+{
+    <div class="page-heading"><div><span class="eyebrow">@article.Category.ToUpperInvariant()</span><h1>@article.Title</h1><p>@article.Description</p></div><span class="badge">@article.ReadMinutes minute read</span></div>
+    <article class="panel help-article">
+        @foreach (var guidance in article.Guidance)
+        {
+            <p @key="guidance">@guidance</p>
+        }
+        <a href="/care/policy">Read the returns policy &rarr;</a>
+    </article>
+    <a class="button" href="/care/request">Send a return request</a>
+}
+else
+{
+    <div class="page-heading"><div><h1>Article not found.</h1><p>Visit the help library to find setup and returns guidance.</p></div></div>
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = "";
+    [CascadingParameter] public HttpContext? HttpContext { get; set; }
+    private CustomerHelpLibrary.HelpArticle? article;
+
+    protected override void OnParametersSet()
+    {
+        article = CustomerHelpLibrary.Articles.FirstOrDefault(item => item.Slug == Slug);
+        if (article is null && HttpContext is not null)
+        {
+            HttpContext.Response.StatusCode = StatusCodes.Status404NotFound;
+        }
+    }
+}

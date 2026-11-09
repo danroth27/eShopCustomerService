@@ -1,0 +1,14 @@
+@page "/care/policy"
+@attribute [OutputCache(PolicyName = "PublicHelp")]
+
+<PageTitle>Returns policy | eShop</PageTitle>
+<a class="back-link" href="/care/help">&larr; Help library</a>
+<div class="page-heading"><div><span class="eyebrow">RETURNS MADE SIMPLE</span><h1>Not quite right?<br />Let's make it right.</h1><p>Know your options before sending your request.</p></div></div>
+<div class="policy-steps">
+    <section class="panel"><span class="eyebrow">01 / GET IN TOUCH</span><h2>Start within 30 days</h2><p>Tell us what happened within 30 days of delivery. Include the problem and any setup checks you have already tried.</p></section>
+    <section class="panel"><span class="eyebrow">02 / REVIEW YOUR OPTIONS</span><h2>Refund or replacement</h2><p>Our representative can prepare a full refund to the original payment or an available, compatible replacement. They confirm the resolution after reviewing your case.</p></section>
+    <section class="panel"><span class="eyebrow">03 / WAIT FOR INSTRUCTIONS</span><h2>Keep everything together</h2><p>Keep your dock, power adapter, and included cables. Wait for return instructions before packing or sending the product.</p></section>
+</div>
+<section class="panel policy-note"><h2>For this demonstration</h2><p>Alex Morgan's USB-C Dock Pro order #48021 is our fictional example. Submitting a request updates that same case for the representative. No payment, shipment, label, or collection is created.</p><a href="/care/help/replacement-options">Learn about compatible replacements &rarr;</a></section>
+<p class="caption">Entire public response generated at <time data-testid="policy-time">@DateTimeOffset.UtcNow.ToString("HH:mm:ss.fff") UTC</time>. This page uses the PublicHelp output-cache policy.</p>
+<a class="button" href="/care/request">Start a return</a>

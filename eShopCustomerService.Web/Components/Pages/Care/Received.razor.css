@@ -1,0 +1,4 @@
+.confirmation { max-width: 800px; margin: 24px auto; }
+.confirmation .eyebrow { display: block; margin-bottom: 16px; }
+.confirmation strong { overflow-wrap: anywhere; }
+.confirmation .button { margin: 8px 8px 0 0; }

@@ -1,6 +1,6 @@
 # eShop Customer Service
 
-A focused returns-and-exchanges workspace showing web development features in **.NET 11**: C# unions with JSON and OpenAPI, shared asynchronous validation in Blazor and Minimal APIs, automatic CSRF protection for form submissions, and authentication refresh without reconnecting.
+A cohesive customer-care and returns workspace showing web development features in **.NET 11**: static SSR, enhanced navigation and forms, client-side validation, caching, component persistence and circuit pause/resume, C# unions with JSON and OpenAPI, shared asynchronous validation, automatic CSRF protection, and authentication refresh without reconnecting.
 
 This is a self-contained companion scenario for [dotnet/eShop](https://github.com/dotnet/eShop), not an upstream extension or a connected deployment. Its fictional orders and inventory are stored locally. It does not call eShop services, issue payments, or create shipments. See [SPEC.md](SPEC.md) for the application specification.
 
@@ -16,6 +16,8 @@ aspire describe
 ```
 
 Open the **HTTPS** `customerservice` URL shown by Aspire and select **Enter demo workspace**. This creates a local representative session, not a verified identity. Both hosts refuse to start outside Development.
+
+When running from a git worktree alongside another instance, use `aspire start --isolated`.
 
 Use `aspire stop` to stop the application. The database in `eShopCustomerService.Web\App_Data\returns.db` survives restarts; **Reset demo data** on the overview restores the seeded scenario. Never use real customer data or expose these local demonstration hosts to a network.
 
@@ -59,7 +61,9 @@ For a technical close-up, filter Network for `_blazor`: the existing WebSocket r
 
 **What this does not promise:** a role change in an external database does not automatically rewrite a cookie or reach every session promptly. The application must obtain updated credentials or revalidate authorization data. This walkthrough demonstrates applying those updated credentials without losing the connection or unsaved work, not automatic role synchronization or instant revocation.
 
-Static pages retain the normal cookie lifetime. Live connections still use `CloseOnAuthenticationExpiration`: browser or OS suspension can interrupt a circuit if refresh cannot run, even while its sign-in cookie remains valid. Session records live only in this process and are removed on sign-out or replacement; after restarting the app, sign in normally again.
+Static pages retain the normal cookie lifetime. Live connections still use `CloseOnAuthenticationExpiration`: browser or OS suspension can interrupt a circuit if refresh cannot run, even while its sign-in cookie remains valid. The existing demo permission records are stored in SQLite, so restarting the service does not invalidate otherwise valid sign-in cookies. Sign-out or a new sign-in deletes the prior record, and expired records cannot be renewed.
+
+ASP.NET Core still issues, protects, authenticates, renews, and expires the cookies. `DemoPermissions` contains only the existing session identifier, refund-approval flag, and expiration aligned with the cookie lifetime. It is demo-specific authorization data, not a hand-written cookie handler, HTTP session provider, account system, or replacement for Identity. Keep the SQLite database and Data Protection keys/application name unchanged for the local restart walkthrough.
 
 This is **cookie authentication**, not ASP.NET Core Identity or an OAuth access-token acquisition demo. There is no Identity security-stamp check or claim that Identity templates automatically configure permission revalidation.
 
@@ -103,8 +107,30 @@ Show `Components\Pages\ServiceQueue.razor`: `Items`, `AnchorMode`, and `ScrollTo
 | HTTP permission controls, outside the live circuit | `eShopCustomerService.Web\Components\Pages\AuthRefresh.razor` |
 | Resource orchestration and endpoint discovery | `eShopCustomerService.AppHost\AppHost.cs` |
 | Variable-height queue, anchor policies, and jump-to-row | `eShopCustomerService.Web\Components\Pages\ServiceQueue.razor` |
+| Static customer care, validation, TempData, and HTTP session | `eShopCustomerService.Web\Components\Pages\Care` |
+| Public cached QuickGrid region | `eShopCustomerService.Web\Components\Shared\CustomerHelpLibrary.razor` |
+| Persistent customer context and opt-in inactivity pause | `eShopCustomerService.Web\Components\Pages\ReturnDetails.razor` |
+| Selected unsaved resolution state | `eShopCustomerService.Web\Domain\ResolutionEditorState.cs` |
+| Circuit metrics, server-requested pause, and bounded shutdown | `eShopCustomerService.Web\Services\CircuitMonitor.cs` |
 
 Inventory lookup includes a configurable 650 ms presentation delay (`Demo:ValidationDelayMilliseconds`). Availability still comes from SQLite. Validation faults do not count as successful checks. Confirmation always rechecks the business invariants inside its transaction.
+
+## Server-rendering walkthrough
+
+The customer journey and representative workflow are part of the same `customerservice` resource in the existing AppHost. No additional demo web application is needed.
+
+1. Enter the representative workspace and reset demo data. Open `/care` in a separate anonymous browser context, such as InPrivate; leave interactive return tabs closed for the initial no-circuit demonstration. Keep the customer anonymous for the whole-response cache example, because the default output-cache policy bypasses authenticated responses.
+2. Explore `/care/help`. Enhanced navigation preserves the document; QuickGrid sorting and pagination use query-string links without a circuit. The public help region is cached for two minutes, while the outer request timestamp changes. `/care/policy` uses a one-minute public output-cache policy.
+3. On `/care/request`, submit Alex Morgan's request for the featured fictional order 48021. Client-side validation rejects invalid input without a POST; the server independently validates accepted submissions. The request is stored in SQLite and updates the very same return's reason, contact details, and audit history.
+4. On `/care/received`, refresh once: the TempData thank-you message disappears, while HTTP session retains the receipt reference. The session cache is process-local; the durable request itself remains in SQLite.
+5. Compare `/rendering-baseline/48021` with `/returns/48021?continuity=true`. The baseline deliberately repeats its context load during prerendering and activation. The normal return view uses `[PersistentState]` to reuse its loaded context.
+6. Select USB-C Dock Pro+, enter `200 Demo Way`, and select **Preview without saving**. This preview and its selected values are component recovery state. Unlike **Review replacement**, preview does not save a database draft.
+7. Pause/resume manually with `await Blazor.pauseCircuit()` and `await Blazor.resumeCircuit()` in the browser console. Then hide the preview tab for about ten seconds while observing `/operations`. The opt-in eight-second inactivity policy releases the live circuit; returning restores a new editor instance with the same selected data.
+8. With the preview active, immediately switch to `/operations` and select **Stop this service gracefully**. Confirm the stop before the inactivity timer fires. Restart **customerservice** in the Aspire dashboard, or run `aspire resource customerservice restart`. Resume the original workspace tab without refreshing it; the process and editor instance change, but the unsaved preview survives.
+
+Only the `continuity=true` view enables the short inactivity timer, so the separate authentication-refresh and virtualization demos retain their existing behavior. Operations uses HTTP polling and requires representative authorization; it does not open a circuit. Close other live tabs before the process-replacement walkthrough, because shutdown requests pause for all connected circuits in this process.
+
+The shutdown callback waits for cooperative pause with a bounded budget before the web server tears down connections. This is a local application-side demonstration, not a production traffic-draining deployment orchestrator. A crash, expired/incompatible recovery state, or full refresh can lose unsaved browser-held work. Durable saving, shared Data Protection, and multi-instance storage design are separate concerns.
 
 ## Verification
 
@@ -116,9 +142,23 @@ dotnet format eShopCustomerService.sln --verify-no-changes
 
 Stop Aspire before building or formatting to release its resource assemblies. Integration tests use isolated temporary databases and cover union contracts, live OpenAPI generation, asynchronous API validation, authentication, rejected cross-origin forms, idempotent confirmation, stock races, rollback, persistence, reset, and permission enforcement with stale demo cookies.
 
+For single-user browser checks, start an isolated AppHost first, then:
+
+```powershell
+Set-Location server-rendering-tools
+npm ci
+$env:DEMO_URL = '<HTTPS customerservice URL shown by Aspire>'
+npm run verify
+npm run verify:auto-pause
+```
+
+The browser check resets fictional demo data and exercises customer handoff, caching, forms, component persistence, pause/resume, authentication refresh, and real cross-origin rejection. The native Edge check verifies actual tab visibility, rather than synthesizing a visibility event. Both create and close only their own browsers. Run sequentially without other live circuits.
+
+To include actual service replacement in `npm run verify`, set `VERIFY_RESTART=1` and `DEMO_APPHOST` to the full path of the owned isolated AppHost project. That check deliberately stops and restarts only `customerservice`; it does not stop the AppHost or the independent test resource. Azure/load experiments are separate and remain deferred.
+
 ## Deliberate boundaries
 
-The local seeded sign-in is **not production authentication**. Order and draft APIs, confirmation, and reset retain the representative policy and derive audit actors from that principal. Only the two fixed union examples, the validation-only endpoint, and the OpenAPI document are anonymous for the HTTP-file demonstration. Both hosts remain Development-only. The sample does not implement a production identity provider, per-customer authorization, real payment processing, or fulfillment.
+The local seeded sign-in is **not production authentication**. Order and draft APIs, confirmation, and reset retain the representative policy and derive audit actors from that principal. The fixed union examples, validation-only endpoint, OpenAPI document, and customer-care pages are anonymous. Customer requests concern only the featured fictional purchase, not an unrestricted public customer/order lookup. Both hosts remain Development-only. The sample does not implement a production identity provider, per-customer authorization, real payment processing, or fulfillment.
 
 The form endpoint relies on .NET 11's automatic CSRF protection without opting out or layering an antiforgery-token requirement over this demonstration. It binds a scalar draft ID, not a union-valued form field. Automatic form protection is not a security guarantee for JSON-only APIs. Workflow APIs still require authentication, authorization, validation, and authoritative business rules; the anonymous validation example only checks a request and cannot commit a business operation.
 
