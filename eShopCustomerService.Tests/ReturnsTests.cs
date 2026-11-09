@@ -36,6 +36,26 @@ public sealed class ReturnsTests
         using var confirmation = await client.PostAsync("/returns/confirm", Form(Guid.NewGuid()));
         Assert.Equal(HttpStatusCode.Redirect, confirmation.StatusCode);
         Assert.Equal("/sign-in", confirmation.Headers.Location!.AbsolutePath);
+        using var queue = await client.GetAsync("/service-queue");
+        Assert.Equal(HttpStatusCode.Redirect, queue.StatusCode);
+        Assert.Equal("/sign-in", queue.Headers.Location!.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task Viewing_the_simulated_queue_does_not_change_persisted_returns()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var cases = await store.GetCasesAsync();
+        var inventory = await store.GetInventoryAsync();
+        var audit = await store.GetAuditAsync(48021);
+        using var response = await client.GetAsync("/service-queue");
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(cases, await store.GetCasesAsync());
+        Assert.Equal(inventory, await store.GetInventoryAsync());
+        Assert.Equal(audit, await store.GetAuditAsync(48021));
     }
 
     [Theory]
@@ -116,6 +136,63 @@ public sealed class ReturnsTests
         Assert.Equal(3, (await store.GetAuditAsync(48021)).Count);
     }
 
+    [Theory]
+    [InlineData(99999, "DOCK-PRO-PLUS", "120 Market Street", HttpStatusCode.NotFound, "The order was not found.")]
+    [InlineData(48021, "DOCK-PRO-PLUS", "no", HttpStatusCode.BadRequest, "Provide a delivery address between 5 and 240 characters.")]
+    [InlineData(48021, "DOCK-PRO", "120 Market Street", HttpStatusCode.Conflict, "This replacement is unavailable. Choose an available alternative.")]
+    public async Task Rejected_drafts_return_problem_details_without_mutating_state(
+        int orderId, string productCode, string address, HttpStatusCode status, string message)
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var cases = await store.GetCasesAsync();
+        var inventory = await store.GetInventoryAsync();
+        var audit = await store.GetAuditAsync(48021);
+        using var response = await client.PostAsJsonAsync("/api/drafts", new SaveResolutionRequest(orderId,
+            new Resolution(new ReplacementResolution(productCode, address))));
+        Assert.Equal(status, response.StatusCode);
+        using var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal((int)status, problem.RootElement.GetProperty("status").GetInt32());
+        Assert.Equal("The operation could not be completed.", problem.RootElement.GetProperty("title").GetString());
+        Assert.Equal(message, problem.RootElement.GetProperty("detail").GetString());
+        Assert.Equal(cases, await store.GetCasesAsync());
+        Assert.Equal(inventory, await store.GetInventoryAsync());
+        Assert.Equal(audit, await store.GetAuditAsync(48021));
+    }
+
+    [Fact]
+    public async Task Resolved_returns_reject_new_drafts_without_mutating_state()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        var draft = await CreateDraftAsync(client);
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        Assert.IsType<ReturnCase>((await store.ConfirmAsync(draft.Id, "Test representative")).Value);
+        var audit = await store.GetAuditAsync(48021);
+        var inventory = await store.GetInventoryAsync();
+        var result = await store.SaveDraftAsync(new(48021,
+            new Resolution(new ReplacementResolution("DOCK-PRO-PLUS", "120 Market Street"))), "Test representative");
+        var failure = Assert.IsType<ResolutionFailure>(result.Value);
+        Assert.Equal(ResolutionFailureKind.Conflict, failure.Kind);
+        Assert.Equal("This return has already been resolved.", failure.Message);
+        Assert.Equal(audit, await store.GetAuditAsync(48021));
+        Assert.Equal(inventory, await store.GetInventoryAsync());
+    }
+
+    [Fact]
+    public async Task Missing_drafts_return_a_not_found_failure()
+    {
+        using var factory = new DemoFactory();
+        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var result = await store.ConfirmAsync(Guid.NewGuid(), "Test representative");
+        var failure = Assert.IsType<ResolutionFailure>(result.Value);
+        Assert.Equal(ResolutionFailureKind.NotFound, failure.Kind);
+        Assert.Equal("The resolution draft was not found.", failure.Message);
+    }
+
     [Fact]
     public async Task Authenticated_cross_origin_form_is_rejected_without_state_change()
     {
@@ -167,7 +244,14 @@ public sealed class ReturnsTests
         var draft = await CreateDraftAsync(client);
         await SetStockAsync(factory.DatabasePath, 0);
         var store = factory.Services.GetRequiredService<ReturnStore>();
-        await Assert.ThrowsAsync<DomainException>(() => store.ConfirmAsync(draft.Id, "Test representative"));
+        var result = await store.ConfirmAsync(draft.Id, "Test representative");
+        var failure = Assert.IsType<ResolutionFailure>(result.Value);
+        Assert.Equal(ResolutionFailureKind.Conflict, failure.Kind);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/returns/confirm") { Content = Form(draft.Id) };
+        request.Headers.Add("Sec-Fetch-Site", "same-origin");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal($"/review/{draft.Id}?error={Uri.EscapeDataString(failure.Message)}", response.Headers.Location!.OriginalString);
         Assert.Equal("Open", (await store.GetCaseAsync(48021))!.Status);
         Assert.Null((await store.GetDraftAsync(draft.Id))!.ConfirmedAt);
         Assert.Equal(4, (await store.GetAuditAsync(48021)).Count);
@@ -183,20 +267,12 @@ public sealed class ReturnsTests
         var second = await CreateDraftAsync(client, 48023);
         await SetStockAsync(factory.DatabasePath, 1);
         var store = factory.Services.GetRequiredService<ReturnStore>();
-        async Task<bool> ConfirmAsync(Guid id)
-        {
-            try
-            {
-                await store.ConfirmAsync(id, "Test representative");
-                return true;
-            }
-            catch (DomainException)
-            {
-                return false;
-            }
-        }
-        var results = await Task.WhenAll(ConfirmAsync(first.Id), ConfirmAsync(second.Id));
-        Assert.Single(results, success => success);
+        var results = await Task.WhenAll(
+            store.ConfirmAsync(first.Id, "Test representative"),
+            store.ConfirmAsync(second.Id, "Test representative"));
+        Assert.Single(results, result => result.Value is ReturnCase);
+        Assert.Equal(ResolutionFailureKind.Conflict,
+            Assert.IsType<ResolutionFailure>(Assert.Single(results, result => result.Value is ResolutionFailure).Value).Kind);
         Assert.Equal(0, (await store.GetInventoryAsync()).Single(p => p.ProductCode == "DOCK-PRO-PLUS").Available);
         Assert.Single(await store.GetCasesAsync(), c => c.Status == "Resolved");
     }
@@ -212,8 +288,9 @@ public sealed class ReturnsTests
                 using var client = first.Browser();
                 await DemoFactory.SignInAsync(client);
                 var store = first.Services.GetRequiredService<ReturnStore>();
-                var draft = await store.SaveDraftAsync(new(48022, new Resolution(new RefundResolution(149m, "PAY-48022"))), "Test representative");
-                await store.ConfirmAsync(draft.Id, "Test representative");
+                var result = await store.SaveDraftAsync(new(48022, new Resolution(new RefundResolution(149m, "PAY-48022"))), "Test representative");
+                var draft = Assert.IsType<ResolutionDraft>(result.Value);
+                Assert.IsType<ReturnCase>((await store.ConfirmAsync(draft.Id, "Test representative")).Value);
             }
             using (var restarted = new DemoFactory(path, deleteOnDispose: false))
             {

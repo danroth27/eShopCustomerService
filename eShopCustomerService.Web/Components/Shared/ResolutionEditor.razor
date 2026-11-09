@@ -1,8 +1,20 @@
 @inject ReturnStore Store
 @inject NavigationManager Navigation
 @inject ILogger<ResolutionEditor> Logger
+@inject IAuthorizationService Authorization
 @implements IDisposable
 
+<section class="panel auth-refresh-panel">
+    <div class="panel-heading"><div><span class="eyebrow">LIVE AUTHENTICATION REFRESH</span><h2>Same workspace. Current permissions.</h2></div>
+        <AuthorizeView Policy="@DemoAuthentication.RefundPolicy">
+            <Authorized><span class="badge success">Refund approval: allowed</span></Authorized>
+            <NotAuthorized><span class="badge warning">Refund approval: removed</span></NotAuthorized>
+        </AuthorizeView>
+    </div>
+    <p>Permissions update without reloading. Your unsaved delivery address and selected replacement stay here.</p>
+    <div class="auth-refresh-details"><span>Editor instance <code>@editorInstance</code></span>
+        <a href="/auth-refresh" target="_blank" rel="noopener">Open permission controls <span aria-hidden="true">&nearr;</span></a></div>
+</section>
 <section class="panel editor-panel">
     <div class="panel-heading"><div><h2>Resolve this return</h2><p>Choose the outcome that works for the customer.</p></div><span class="step-label">01 / PREPARE</span></div>
     <div class="resolution-choices" role="group" aria-label="Resolution type">
@@ -68,7 +80,14 @@
         <div class="refund-preview"><span class="eyebrow">REFUND AMOUNT</span><strong>@Order.PaidAmount.ToString("C", CultureInfo.GetCultureInfo("en-US"))</strong><p>Full refund to the original payment method.</p></div>
         <dl class="facts"><div><dt>Payment reference</dt><dd>PAY-@Order.OrderId</dd></div><div><dt>Refund destination</dt><dd>Original payment method</dd></div></dl>
         <div class="notice subtle"><Icon Name="shield" /><span>The amount and payment reference must match the original order.</span></div>
-        <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? "Saving draft..." : "Review refund") <Icon Name="arrow" /></button></div>
+        <AuthorizeView Policy="@DemoAuthentication.RefundPolicy">
+            <Authorized>
+                <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? "Saving draft..." : "Review refund") <Icon Name="arrow" /></button></div>
+            </Authorized>
+            <NotAuthorized>
+                <div class="notice error" role="status">Refund approval is no longer available for this session. Your edits are preserved; you can still prepare a replacement.</div>
+            </NotAuthorized>
+        </AuthorizeView>
     }
 </section>
 
@@ -80,6 +99,7 @@
     private EditContext editContext = default!;
     private IReadOnlyList<InventoryItem> products = [];
     private bool saving;
+    private readonly string editorInstance = Guid.NewGuid().ToString("N")[..8];
     private string? error;
     private bool InteractionUnavailable => saving || !RendererInfo.IsInteractive;
     private bool ValidationPending => editContext.IsValidationPending()
@@ -116,13 +136,23 @@
                 error = "Your representative session is no longer available. Sign in again.";
                 return;
             }
-            var draft = await Store.SaveDraftAsync(new(Order.OrderId, resolution), user.Identity!.Name!);
-            Navigation.NavigateTo($"/review/{draft.Id}", forceLoad: true);
-        }
-        catch (DomainException exception)
-        {
-            Logger.LogWarning(exception, "Draft rejected for order {OrderId}", Order.OrderId);
-            error = exception.Message;
+            if (resolution.Value is RefundResolution
+                && !(await Authorization.AuthorizeAsync(user, DemoAuthentication.RefundPolicy)).Succeeded)
+            {
+                error = "Refund approval is required. Your unsaved work has been preserved.";
+                return;
+            }
+            var result = await Store.SaveDraftAsync(new(Order.OrderId, resolution), user.Identity!.Name!);
+            switch (result)
+            {
+                case ResolutionDraft draft:
+                    Navigation.NavigateTo($"/review/{draft.Id}", forceLoad: true);
+                    break;
+                case ResolutionFailure failure:
+                    Logger.LogWarning("Draft rejected for order {OrderId}: {Reason}", Order.OrderId, failure.Message);
+                    error = failure.Message;
+                    break;
+            }
         }
         finally
         {

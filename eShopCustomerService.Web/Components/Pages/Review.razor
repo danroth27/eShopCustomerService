@@ -24,10 +24,15 @@ else
             @if (draft.ConfirmedAt is null && item.Status == "Open")
             {
                 <div class="notice subtle"><Icon Name="shield" /><span>Confirmation rechecks the business rules and records the outcome and activity history in one transaction.</span></div>
-                <form method="post" action="/returns/confirm">
-                    <input type="hidden" name="draftId" value="@draft.Id" />
-                    <button class="button full-width" type="submit">Confirm @(draft.Resolution.Value is RefundResolution ? "refund" : "replacement") <Icon Name="check" /></button>
-                </form>
+                <AuthorizeView Policy="@(draft.Resolution.Value is RefundResolution ? DemoAuthentication.RefundPolicy : "CustomerService")">
+                    <Authorized>
+                        <form method="post" action="/returns/confirm">
+                            <input type="hidden" name="draftId" value="@draft.Id" />
+                            <button class="button full-width" type="submit">Confirm @(draft.Resolution.Value is RefundResolution ? "refund" : "replacement") <Icon Name="check" /></button>
+                        </form>
+                    </Authorized>
+                    <NotAuthorized><div class="notice error" role="alert">Refund approval is required to confirm this draft.</div></NotAuthorized>
+                </AuthorizeView>
                 <p class="fine-print">This is a local simulation. No real payment or shipment is processed.</p>
             }
             else

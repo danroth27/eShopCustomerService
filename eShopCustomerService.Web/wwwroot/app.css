@@ -226,6 +226,33 @@ select { min-height: 46px; }
 .response-empty { min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--cp-text-soft); }
 .response-empty > .icon { width: 36px; height: 36px; margin-bottom: 20px; }
 .response-empty p { font-size: 12px; max-width: 280px; }
+.auth-controls { max-width: 820px; }
+.auth-refresh-panel .eyebrow { display: block; margin-bottom: 8px; color: var(--cp-accent); }
+.auth-refresh-panel p { font-size: 12px; }
+.auth-refresh-details { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--cp-text-soft); }
+.auth-refresh-details code { margin-left: 8px; }
+.queue-heading { margin-bottom: 20px; }
+.queue-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; margin-bottom: 20px; padding: 16px 20px; }
+.queue-control { width: 190px; }
+.queue-control label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.queue-jump, .queue-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.queue-jump { flex-wrap: nowrap; }
+.queue-jump input { min-width: 0; }
+.queue-panel { padding: 0; overflow: hidden; }
+.queue-panel-heading { padding: 16px 20px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: center; }
+.queue-panel-heading h2 { margin: 0; }
+.queue-panel-heading p { font-size: 12px; margin: 4px 0 0; }
+.queue-viewport { height: 420px; max-height: 60vh; overflow-y: auto; border-block: 1px solid var(--cp-border); }
+.queue-row { min-height: 104px; padding: 16px 20px; border-bottom: 1px solid var(--cp-border); }
+.queue-row[data-selected="true"] { background: var(--cp-accent-soft); box-shadow: inset 4px 0 var(--cp-accent); }
+.queue-row-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.queue-row-heading > div { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.queue-row-heading strong { font-size: 14px; }
+.queue-reference { font-size: 12px; font-weight: 650; color: var(--cp-accent); font-variant-numeric: tabular-nums; }
+.queue-summary { font-size: 13px; margin: 8px 0 0; }
+.queue-context { margin-top: 12px; padding: 12px 16px; background: var(--cp-bg-elevated); border: 1px solid var(--cp-border); border-radius: 8px; font-size: 13px; }
+.queue-context p { margin-bottom: 10px; }
+.queue-status { min-height: 20px; margin: 12px 20px; font-size: 12px; color: var(--cp-text); }
 .probe-container { display: grid; place-items: center; min-height: 100vh; padding: 32px; }
 .probe-panel { width: min(100%, 620px); padding: 40px; }
 .probe-panel h1 { margin-top: 24px; }

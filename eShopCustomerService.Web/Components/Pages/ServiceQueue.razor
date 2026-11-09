@@ -1,0 +1,209 @@
+@page "/service-queue"
+@attribute [Authorize(Policy = "CustomerService")]
+@rendermode InteractiveServer
+@inject ReturnStore Store
+
+<PageTitle>Service queue | eShop</PageTitle>
+
+<div class="page-heading queue-heading">
+    <div>
+        <span class="eyebrow">CUSTOMER OPERATIONS</span>
+        <h1>Keep the customer context in view.</h1>
+        <p>A large service queue. Different-sized cases. Room for the details.</p>
+    </div>
+    <a class="button secondary" href="/">Back to overview</a>
+</div>
+
+@if (!loaded)
+{
+    <p role="status">Loading the service queue...</p>
+}
+else if (entries.Count == 0)
+{
+    <section class="panel empty-state"><h2>No returns to explore</h2><p>Reset the demo data from the overview to restore the fictional returns.</p></section>
+}
+else
+{
+    <section class="panel queue-controls" aria-label="Queue controls">
+        <div class="queue-control">
+            <label for="queue-anchor">Follow new entries</label>
+            <select id="queue-anchor" @bind="anchorModeValue" disabled="@InteractionUnavailable">
+                <option value="@((int)VirtualizeAnchorMode.None)">Neither edge</option>
+                <option value="@((int)VirtualizeAnchorMode.Start)">Start of queue</option>
+                <option value="@((int)VirtualizeAnchorMode.End)">End of queue</option>
+                <option value="@((int)(VirtualizeAnchorMode.Start | VirtualizeAnchorMode.End))">Both edges</option>
+            </select>
+        </div>
+        <div class="queue-control">
+            <label for="queue-row">Jump to row</label>
+            <div class="queue-jump">
+                <input id="queue-row" type="number" min="1" max="@entries.Count" @bind="requestedRow" disabled="@InteractionUnavailable" />
+                <button class="button" @onclick="JumpAsync" disabled="@InteractionUnavailable">Jump</button>
+            </div>
+        </div>
+        <div class="queue-actions">
+            <button class="button secondary" @onclick="GoToStartAsync" disabled="@InteractionUnavailable">Go to start</button>
+            <button class="button secondary" @onclick="GoToEndAsync" disabled="@InteractionUnavailable">Go to end</button>
+            <button class="button secondary" @onclick="ExpandPrecedingRow" disabled="@(InteractionUnavailable || selectedId is null)">Expand preceding row</button>
+        </div>
+    </section>
+    @if (failure is not null)
+    {
+        <p class="notice error" role="alert">@failure</p>
+    }
+    <section class="panel queue-panel">
+        <div class="queue-panel-heading">
+            <div><h2>Service queue</h2><p>@entries.Count.ToString("N0") simulated entries linked to the seeded returns.</p></div>
+            <div class="queue-actions">
+                <button class="button secondary" @onclick="Prepend" disabled="@InteractionUnavailable">Add at start</button>
+                <button class="button secondary" @onclick="Append" disabled="@InteractionUnavailable">Add at end</button>
+            </div>
+        </div>
+        <div class="queue-viewport" tabindex="0" aria-label="Virtualized service queue">
+            <Virtualize @ref="virtualizer" Items="entries" Context="entry" ItemSize="120" OverscanCount="5" AnchorMode="@((VirtualizeAnchorMode)anchorModeValue)">
+                <article @key="entry.Id" class="queue-row" data-queue-id="@entry.Id" data-selected="@(entry.Id == selectedId ? "true" : "false")">
+                    <div class="queue-row-heading">
+                        <div>
+                            <span class="queue-reference">Q-@entry.Id.ToString("D5")</span>
+                            <strong>@entry.Return.Customer</strong>
+                            <span class="muted">@entry.Return.Product</span>
+                        </div>
+                        @if (entry.Id == selectedId)
+                        {
+                            <span class="badge success">Jump target</span>
+                        }
+                        <button class="text-button" @onclick="() => Toggle(entry.Id)" aria-expanded="@expanded.Contains(entry.Id)">
+                            @(expanded.Contains(entry.Id) ? "Hide details" : "Show details")
+                        </button>
+                    </div>
+                    <p class="queue-summary">@Summary(entry)</p>
+                    @if (expanded.Contains(entry.Id))
+                    {
+                        <div class="queue-context">
+                            <p><strong>Customer context</strong> @entry.Return.Reason</p>
+                            <p>Review the return and check replacement availability before proposing a resolution.</p>
+                            @if (earlierContext.Contains(entry.Id))
+                            {
+                                <p>The customer has supplied additional troubleshooting notes. Review the product, the original payment, and the delivery details together before continuing.</p>
+                                <p>These additional notes increase the height of the preceding row. The selected case should remain in the same viewport position.</p>
+                            }
+                            <a href="/returns/@entry.Return.OrderId">Open return #@entry.Return.OrderId <span aria-hidden="true">&rarr;</span></a>
+                        </div>
+                    }
+                </article>
+            </Virtualize>
+        </div>
+        <p class="queue-status" role="status">@status</p>
+    </section>
+    <p class="fine-print">Presentation data only. Queue changes stay in this page; orders, inventory, and audit history are not changed. Blazor Virtualize manages the scrolling, row measurement, and anchoring.</p>
+}
+
+@code {
+    private List<QueueEntry> entries = [];
+    private readonly HashSet<int> expanded = [];
+    private readonly HashSet<int> earlierContext = [];
+    private Virtualize<QueueEntry> virtualizer = null!;
+    private int anchorModeValue = (int)VirtualizeAnchorMode.Start;
+    private int? requestedRow = 5000;
+    private int? selectedId;
+    private int nextId;
+    private bool loaded;
+    private bool jumping;
+    private string? failure;
+    private string status = "Jump to a case, expand its details, or follow new entries at either edge.";
+    private bool InteractionUnavailable => !RendererInfo.IsInteractive || jumping;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var returns = await Store.GetCasesAsync();
+        if (returns.Count > 0)
+        {
+            for (var i = 0; i < 10_000; i++)
+            {
+                var entry = new QueueEntry(++nextId, returns[i % returns.Count]);
+                entries.Add(entry);
+                if (entry.Id % 5 == 0)
+                {
+                    expanded.Add(entry.Id);
+                }
+            }
+        }
+        loaded = true;
+    }
+
+    private static string Summary(QueueEntry entry) => (entry.Id % 3) switch
+    {
+        0 => "Replacement requested. Review compatibility and inventory before preparing the resolution.",
+        1 => $"Customer follow-up about {entry.Return.Product}. Review the return context and the next action.",
+        _ => "Refund or replacement? Check the customer's notes before choosing the outcome."
+    };
+
+    private void Toggle(int id)
+    {
+        if (!expanded.Remove(id))
+        {
+            expanded.Add(id);
+        }
+    }
+
+    private async Task JumpAsync()
+    {
+        if (requestedRow is not int row || row < 1 || row > entries.Count)
+        {
+            failure = $"Choose a row between 1 and {entries.Count:N0}.";
+            return;
+        }
+        await GoToAsync(row - 1);
+    }
+
+    private Task GoToStartAsync() => GoToAsync(0);
+    private Task GoToEndAsync() => GoToAsync(entries.Count - 1);
+
+    private async Task GoToAsync(int index)
+    {
+        failure = null;
+        selectedId = entries[index].Id;
+        requestedRow = index + 1;
+        jumping = true;
+        try
+        {
+            await virtualizer.ScrollToItemAsync(index);
+            status = $"Selected row {index + 1:N0}, case Q-{selectedId:D5}.";
+        }
+        finally
+        {
+            jumping = false;
+        }
+    }
+
+    private void ExpandPrecedingRow()
+    {
+        var index = entries.FindIndex(entry => entry.Id == selectedId);
+        if (index < 1)
+        {
+            failure = "Jump to a row after the first to expand the preceding context.";
+            return;
+        }
+        failure = null;
+        var preceding = entries[index - 1];
+        expanded.Add(preceding.Id);
+        earlierContext.Add(preceding.Id);
+        status = $"Expanded case Q-{preceding.Id:D5} above the selected case. Watch the jump target stay in place.";
+    }
+
+    private void Prepend()
+    {
+        var entry = new QueueEntry(++nextId, entries[0].Return);
+        entries = [entry, .. entries];
+        status = $"Added case Q-{entry.Id:D5} at the start.";
+    }
+
+    private void Append()
+    {
+        var entry = new QueueEntry(++nextId, entries[^1].Return);
+        entries = [.. entries, entry];
+        status = $"Added case Q-{entry.Id:D5} at the end.";
+    }
+
+    private sealed record QueueEntry(int Id, ReturnCase Return);
+}

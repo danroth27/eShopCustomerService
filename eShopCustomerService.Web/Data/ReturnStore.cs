@@ -102,20 +102,27 @@ public sealed class ReturnStore : IDisposable
         return await FindDraftAsync(db, null, id, ct);
     }
 
-    public async Task<ResolutionDraft> SaveDraftAsync(SaveResolutionRequest request, string actor, CancellationToken ct = default)
+    public async Task<ResolutionResult<ResolutionDraft>> SaveDraftAsync(
+        SaveResolutionRequest request, string actor, CancellationToken ct = default)
     {
         await writer.WaitAsync(ct);
         try
         {
             await using var db = await OpenAsync(ct);
             using var transaction = db.BeginTransaction();
-            var order = await FindCaseAsync(db, transaction, request.OrderId, ct)
-                ?? throw new DomainException("The order was not found.", 404);
+            var order = await FindCaseAsync(db, transaction, request.OrderId, ct);
+            if (order is null)
+            {
+                return new(new ResolutionFailure("The order was not found.", ResolutionFailureKind.NotFound));
+            }
             if (order.Status != "Open")
             {
-                throw new DomainException("This return has already been resolved.");
+                return new(new ResolutionFailure("This return has already been resolved."));
             }
-            await ValidateResolutionAsync(db, transaction, order, request.Resolution, ct);
+            if (await ValidateResolutionAsync(db, transaction, order, request.Resolution, ct) is { } failure)
+            {
+                return new(failure);
+            }
             var draft = new ResolutionDraft(Guid.NewGuid(), order.OrderId, request.Resolution, DateTimeOffset.UtcNow, null);
             await using var command = db.CreateCommand();
             command.Transaction = transaction;
@@ -127,7 +134,7 @@ public sealed class ReturnStore : IDisposable
             await command.ExecuteNonQueryAsync(ct);
             await AddAuditAsync(db, transaction, order.OrderId, actor, "Resolution draft prepared", ct);
             transaction.Commit();
-            return draft;
+            return new(draft);
         }
         finally
         {
@@ -135,26 +142,35 @@ public sealed class ReturnStore : IDisposable
         }
     }
 
-    public async Task<ReturnCase> ConfirmAsync(Guid id, string actor, CancellationToken ct = default)
+    public async Task<ResolutionResult<ReturnCase>> ConfirmAsync(Guid id, string actor, CancellationToken ct = default)
     {
         await writer.WaitAsync(ct);
         try
         {
             await using var db = await OpenAsync(ct);
             using var transaction = db.BeginTransaction();
-            var draft = await FindDraftAsync(db, transaction, id, ct)
-                ?? throw new DomainException("The resolution draft was not found.", 404);
-            var order = await FindCaseAsync(db, transaction, draft.OrderId, ct)
-                ?? throw new DomainException("The order was not found.", 404);
+            var draft = await FindDraftAsync(db, transaction, id, ct);
+            if (draft is null)
+            {
+                return new(new ResolutionFailure("The resolution draft was not found.", ResolutionFailureKind.NotFound));
+            }
+            var order = await FindCaseAsync(db, transaction, draft.OrderId, ct);
+            if (order is null)
+            {
+                return new(new ResolutionFailure("The order was not found.", ResolutionFailureKind.NotFound));
+            }
             if (draft.ConfirmedAt is not null)
             {
-                return order;
+                return new(order);
             }
             if (order.Status != "Open")
             {
-                throw new DomainException("A different resolution has already been confirmed for this return.");
+                return new(new ResolutionFailure("A different resolution has already been confirmed for this return."));
             }
-            await ValidateResolutionAsync(db, transaction, order, draft.Resolution, ct);
+            if (await ValidateResolutionAsync(db, transaction, order, draft.Resolution, ct) is { } failure)
+            {
+                return new(failure);
+            }
 
             if (draft.Resolution.Value is ReplacementResolution replacement)
             {
@@ -164,7 +180,7 @@ public sealed class ReturnStore : IDisposable
                 allocation.Parameters.AddWithValue("$code", replacement.ProductCode);
                 if (await allocation.ExecuteNonQueryAsync(ct) != 1)
                 {
-                    throw new DomainException("Inventory changed. Choose an available replacement.");
+                    return new(new ResolutionFailure("Inventory changed. Choose an available replacement."));
                 }
             }
 
@@ -185,7 +201,7 @@ public sealed class ReturnStore : IDisposable
                 : "Replacement confirmed and one unit allocated; no shipment was created";
             await AddAuditAsync(db, transaction, order.OrderId, actor, action, ct);
             transaction.Commit();
-            return order with { Status = "Resolved", Resolution = draft.Resolution };
+            return new(order with { Status = "Resolved", Resolution = draft.Resolution });
         }
         finally
         {
@@ -207,21 +223,21 @@ public sealed class ReturnStore : IDisposable
         }
     }
 
-    private static async Task ValidateResolutionAsync(
+    private static async Task<ResolutionFailure?> ValidateResolutionAsync(
         SqliteConnection db, SqliteTransaction transaction, ReturnCase order, Resolution resolution, CancellationToken ct)
     {
         switch (resolution.Value)
         {
             case RefundResolution refund when refund.Amount == order.PaidAmount
                 && refund.PaymentReference == $"PAY-{order.OrderId}":
-                return;
+                return null;
             case RefundResolution:
-                throw new DomainException("A full refund must match the original payment and paid amount.", 400);
+                return new("A full refund must match the original payment and paid amount.", ResolutionFailureKind.Invalid);
             case ReplacementResolution replacement:
                 if (string.IsNullOrWhiteSpace(replacement.DeliveryAddress)
                     || replacement.DeliveryAddress.Length is < 5 or > 240)
                 {
-                    throw new DomainException("Provide a delivery address between 5 and 240 characters.", 400);
+                    return new("Provide a delivery address between 5 and 240 characters.", ResolutionFailureKind.Invalid);
                 }
                 await using (var check = db.CreateCommand())
                 {
@@ -231,12 +247,12 @@ public sealed class ReturnStore : IDisposable
                     var value = await check.ExecuteScalarAsync(ct);
                     if (value is not long available || available <= 0)
                     {
-                        throw new DomainException("This replacement is unavailable. Choose an available alternative.");
+                        return new("This replacement is unavailable. Choose an available alternative.");
                     }
                 }
-                return;
+                return null;
             default:
-                throw new DomainException("Choose a refund or replacement resolution.", 400);
+                return new("Choose a refund or replacement resolution.", ResolutionFailureKind.Invalid);
         }
     }
 

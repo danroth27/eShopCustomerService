@@ -27,6 +27,8 @@ The editor uses typed union construction, not union-valued form binding. Confirm
 
 ## State and invariants
 
+A separate, authenticated service queue demonstrates .NET 11 virtualization in the same workspace. Generate 10,000 explicitly simulated entries linked to the seeded returns, without adding them to SQLite. Use built-in variable-height measurement, `VirtualizeAnchorMode` edge policies, and `ScrollToItemAsync`. Expanding context above a selected case and prepending entries must preserve the visible case and its offset. End anchoring follows appended entries only while already at the bottom. Queue changes remain page-local and must not alter the keynote or authentication-refresh workflows.
+
 SQLite stores orders, inventory, drafts, completed resolutions, and audit events. Seed one primary return and several supporting cases. Inventory includes one unavailable replacement and one available alternative.
 
 Saving a draft never allocates inventory or issues a refund. Confirmation rechecks eligibility and atomically updates the return, allocates stock if applicable, and writes the audit record in one database transaction. Concurrent or repeated confirmations must not allocate twice. A failed commit leaves stock, order state, and audit history unchanged. Refund confirmation records a simulated refund; no real payment gateway or shipment is involved.
@@ -40,6 +42,8 @@ Use an explicitly labeled, Development-only local representative sign-in, a prot
 The confirmation endpoint binds a form and relies on .NET 11's automatic CSRF protection. Do not opt it out or add a competing token requirement that obscures the demonstration. JSON workflow endpoints are independently authenticated, authorized, and validated; do not claim automatic form protection enforces JSON requests. The anonymous validation-only endpoint runs the shared rule without saving a draft or allocating inventory.
 
 The cross-origin test uses a top-level form navigation. Its test cookie must be available to the browser on that request so a 400 can be attributed to form protection rather than a sign-in redirect. Any demonstration-only cookie settings must be documented. Do not expose the demo to a network or deploy it as production software.
+
+Every workspace sign-in creates a session with refund approval and the normal long-lived cookie. A separate static SSR controls page changes the session's permission and issues updated cookie credentials. `MaximumAuthenticationExpiration` caps connection authentication at 20 seconds for presentation, independent of the cookie lifetime. Scheduled HTTP reauthentication applies the current principal to the existing Blazor Server circuit without discarding editor state. Refund draft creation and confirmation enforce the policy on the server, not just in `AuthorizeView`. Restore approval before continuing other demos; there is no separate Start/End mode. This is not automatic detection of external role changes, instant revocation, ASP.NET Core Identity, or an OAuth renewal implementation.
 
 ## Presenter flow
 

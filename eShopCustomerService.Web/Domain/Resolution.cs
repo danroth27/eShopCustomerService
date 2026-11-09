@@ -23,8 +23,14 @@ public sealed record InventoryItem(string ProductCode, string Name, string Descr
 
 public sealed record AuditEntry(long Id, int OrderId, string Actor, string Action, DateTimeOffset Timestamp);
 
-public sealed class DomainException(string message, int statusCode = StatusCodes.Status409Conflict)
-    : Exception(message)
+public union ResolutionResult<T>(T, ResolutionFailure);
+
+public sealed record ResolutionFailure(
+    string Message, ResolutionFailureKind Kind = ResolutionFailureKind.Conflict);
+
+public enum ResolutionFailureKind
 {
-    public int StatusCode { get; } = statusCode;
+    Invalid,
+    NotFound,
+    Conflict
 }
