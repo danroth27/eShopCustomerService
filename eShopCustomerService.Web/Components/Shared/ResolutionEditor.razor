@@ -1,4 +1,3 @@
-@using System.Text
 @inject ReturnStore Store
 @inject NavigationManager Navigation
 @inject ILogger<ResolutionEditor> Logger
@@ -17,7 +16,7 @@
         <a href="/auth-refresh" target="_blank" rel="noopener">Open permission controls <span aria-hidden="true">&nearr;</span></a></div>
 </section>
 <section class="panel editor-panel">
-    <div class="panel-heading"><div><h2>Resolve this return</h2><p>Choose the outcome that works for the customer.</p></div><span class="step-label">01 / PREPARE</span></div>
+    <div class="panel-heading"><div><h2>Choose the right resolution</h2><p>Choose the outcome that works for the customer.</p></div><span class="step-label">01 / PREPARE</span></div>
     <div class="resolution-choices" role="group" aria-label="Resolution type">
         <button type="button" class="choice @(kind == "refund" ? "selected" : "")" aria-pressed="@(kind == "refund")" @onclick='() => kind = "refund"' disabled="@InteractionUnavailable">
             <Icon Name="money" /><strong>Refund</strong><span>Return to original payment</span>
@@ -85,10 +84,10 @@
             <Authorized>
                 <div class="editor-footer">
                     <span>No real payment is issued.</span>
-                  <button class="button"
-type="button"
-                      @onclick="SaveRefundAsync"
- disabled="@InteractionUnavailable">
+                    <button class="button"
+                            type="button"
+                            @onclick="ReviewRefundAsync"
+                            disabled="@InteractionUnavailable">
                         @(saving ? "Saving draft..." : "Review refund")
                         <Icon Name="arrow" />
                     </button>
@@ -131,7 +130,7 @@ type="button"
     private Task SaveReplacementAsync() => SaveAsync(new Resolution(
         new ReplacementResolution(model.ProductCode, model.DeliveryAddress)));
 
-    private Task SaveRefundAsync() => SaveAsync(new Resolution(
+    private Task ReviewRefundAsync() => SaveAsync(new Resolution(
         new RefundResolution(Order.PaidAmount, $"PAY-{Order.OrderId}")));
 
     private async Task SaveAsync(Resolution resolution)
@@ -141,12 +140,12 @@ type="button"
         try
         {
             var user = (await AuthenticationState).User;
-            if(!user.IsInRole("Representative"))
+            if (!user.IsInRole("Representative"))
             {
                 error = "Your representative session is no longer available. Sign in again.";
                 return;
             }
-            if(resolution.Value is RefundResolution
+            if (resolution.Value is RefundResolution
                 && !(await Authorization.AuthorizeAsync(user, DemoAuthentication.RefundPolicy)).Succeeded)
             {
                 error = "Refund approval is required. Your unsaved work has been preserved.";
