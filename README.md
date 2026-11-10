@@ -86,35 +86,6 @@ Open **Service queue** from the navigation or **Virtualized service queue** in t
 
 Show `Components\Pages\ServiceQueue.razor`: `Items`, `AnchorMode`, and `ScrollToItemAsync` are framework APIs. Row-height measurement and scroll restoration are not implemented with custom JavaScript. `ItemSize` supplies an initial estimate, not a fixed row height. Programmatic jumps disengage active following in this SDK; select the desired edge policy after jumping, changing through **Neither edge** if that policy was already selected. For the live talk, use the jump, preceding-row expansion, middle-of-list prepend, and end-follow steps; no database reset is needed.
 
-## Razor tooling demo
-
-The `demo/razor-tooling` branch is the runnable starting point; `main` contains the completed edit. The demonstration uses **one component, one browser page, and one save**. Both branches retain the same refund handling, authorization, and validation. The starting branch commits the unused using directive and formatting issues near the editor heading, so no manual code staging is needed.
-
-Before starting the app for a rehearsal:
-
-```powershell
-git switch demo/razor-tooling
-```
-
-For the Hot Reload segment, open the solution in Visual Studio, set **eShopCustomerService.AppHost** as the startup project, and run it with Hot Reload enabled. Do not leave a separate Aspire CLI instance of this app running. Start on this branch before the earlier security demos and stay on it throughout the talk; do not switch branches or restart the app while demonstrating preserved editor state.
-
-The root `.editorconfig` already sets `csharp_space_after_keywords_in_control_flow_statements = true` for C# and Razor. Keep format-on-save off for this walkthrough so the deliberate cleanup examples remain staged. Disable Copilot inline suggestions for the Emmet step.
-
-1. Keep order **48022** open on **Replacement**, with **USB-C Dock Pro+** selected and an unsaved delivery address of **200 Demo Way**. Open only `eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor` in the editor.
-2. Immediately before the `<div>` with `class="resolution-choices"`, type `h3+ul>li*3` and press **Tab**. Fill the heading with **Customer follow-up** and the three items with **Confirm symptoms**, **Check replacement availability**, and **Review before confirmation**. Do not save yet.
-3. Invoke **Remove and Sort Usings**, then **Format Document**. Show `@using System.Text` removed, the nearby heading markup aligned, and `@if(error is not null)` becoming `@if (error is not null)` according to `.editorconfig`. No source-file switch or scrolling to the handler is needed.
-4. Save `ResolutionEditor.razor` once. Show the **Customer follow-up** section appear in the already-open return editor through Hot Reload, without refreshing or navigating. Point out that the selected product, unsaved address, and **Editor instance** remain unchanged.
-
-There is no `Home.razor` edit, overview-page navigation, heading-text change, or live handler rename. Cover refactoring on the overview slide rather than in this short demonstration. The completed component is on `main`; compare with `git diff main -- eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor`. Its precise whitespace may differ with the installed Razor formatter.
-
-To repeat, stop the demo app, close this document, and discard any unsaved rehearsal edits. While still on `demo/razor-tooling`, restore the committed starting point:
-
-```powershell
-git restore --source=demo/razor-tooling --staged --worktree -- eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor
-```
-
-This discards rehearsal changes in **only that component**. Do not use it for edits you intend to keep. Reopen the document, start the app, and prepare the normal browser scenario. No database reset is needed specifically for the Razor edit. To inspect the completed version instead, switch to `main` after restoring the rehearsal file.
-
 ## Code landmarks
 
 | Story | File |

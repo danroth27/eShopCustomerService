@@ -16,20 +16,7 @@
         <a href="/auth-refresh" target="_blank" rel="noopener">Open permission controls <span aria-hidden="true">&nearr;</span></a></div>
 </section>
 <section class="panel editor-panel">
-    <div class="panel-heading">
-        <div>
-            <h2>Resolve this return</h2>
-            <p>Choose the outcome that works for the customer.</p>
-        </div>
-        <span class="step-label">01 / PREPARE</span>
-    </div>
-
-    <h3>Customer follow-up</h3>
-    <ul>
-        <li>Confirm symptoms</li>
-        <li>Check replacement availability</li>
-        <li>Review before confirmation</li>
-    </ul>
+    <div class="panel-heading"><div><h2>Resolve this return</h2><p>Choose the outcome that works for the customer.</p></div><span class="step-label">01 / PREPARE</span></div>
     <div class="resolution-choices" role="group" aria-label="Resolution type">
         <button type="button" class="choice @(kind == "refund" ? "selected" : "")" aria-pressed="@(kind == "refund")" @onclick='() => kind = "refund"' disabled="@InteractionUnavailable">
             <Icon Name="money" /><strong>Refund</strong><span>Return to original payment</span>
@@ -95,16 +82,7 @@
         <div class="notice subtle"><Icon Name="shield" /><span>The amount and payment reference must match the original order.</span></div>
         <AuthorizeView Policy="@DemoAuthentication.RefundPolicy">
             <Authorized>
-                <div class="editor-footer">
-                    <span>No real payment is issued.</span>
-                    <button class="button"
-                            type="button"
-                            @onclick="SaveRefundAsync"
-                            disabled="@InteractionUnavailable">
-                        @(saving ? "Saving draft..." : "Review refund")
-                        <Icon Name="arrow" />
-                    </button>
-                </div>
+                <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? "Saving draft..." : "Review refund") <Icon Name="arrow" /></button></div>
             </Authorized>
             <NotAuthorized>
                 <div class="notice error" role="status">Refund approval is no longer available for this session. Your edits are preserved; you can still prepare a replacement.</div>
