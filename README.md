@@ -88,7 +88,7 @@ Show `Components\Pages\ServiceQueue.razor`: `Items`, `AnchorMode`, and `ScrollTo
 
 ## Razor tooling demo
 
-The `demo/razor-tooling` branch is the runnable starting point; `main` contains the completed edits. Both branches retain the same refund handling, authorization, and validation. The starting branch commits the unused using directive and formatting issues, so no missing handlers, unsaved-buffer staging, or method restoration is needed.
+The `demo/razor-tooling` branch is the runnable starting point; `main` contains the completed edit. The demonstration uses **one component, one browser page, and one save**. Both branches retain the same refund handling, authorization, and validation. The starting branch commits the unused using directive and formatting issues near the editor heading, so no manual code staging is needed.
 
 Before starting the app for a rehearsal:
 
@@ -100,19 +100,20 @@ For the Hot Reload segment, open the solution in Visual Studio, set **eShopCusto
 
 The root `.editorconfig` already sets `csharp_space_after_keywords_in_control_flow_statements = true` for C# and Razor. Keep format-on-save off for this walkthrough so the deliberate cleanup examples remain staged. Disable Copilot inline suggestions for the Emmet step.
 
-1. In `eShopCustomerService.Web\Components\Pages\Home.razor`, below the paragraph under **Designed for a clear decision**, type `ul>li*3` and press **Tab**. Fill the three items with **Confirm the customer's symptoms**, **Check replacement availability**, and **Explain the next step**. Leave this document unsaved until the Hot Reload demonstration is complete.
-2. In `Components\Shared\ResolutionEditor.razor`, invoke **Remove and Sort Usings**, then **Format Document**. Show `@using System.Text` removed, the refund button's attributes aligned, and `if(` becoming `if (` according to `.editorconfig`.
-3. Change **Resolve this return** to **Choose the right resolution**. Save only `ResolutionEditor.razor`. Show the already-open return editor update through Hot Reload without refreshing, restarting, or navigating.
-4. Invoke **Rename** on the refund button's `SaveRefundAsync` reference and rename it to `ReviewRefundAsync`. Show that both the Razor binding and C# method update, without changing the method body or disabling the refund workflow. Leave this refactoring unsaved until the walkthrough is over: demonstrate Hot Reload before the rename so preserving the live editor does not depend on support for that structural edit.
-5. After the walkthrough, save both completed documents. These two files should now match `main`; compare with `git diff main -- eShopCustomerService.Web\Components\Pages\Home.razor eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor`. Their precise whitespace may differ with the installed Razor formatter.
+1. Keep order **48022** open on **Replacement**, with **USB-C Dock Pro+** selected and an unsaved delivery address of **200 Demo Way**. Open only `eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor` in the editor.
+2. Immediately before the `<div>` with `class="resolution-choices"`, type `h3+ul>li*3` and press **Tab**. Fill the heading with **Customer follow-up** and the three items with **Confirm symptoms**, **Check replacement availability**, and **Review before confirmation**. Do not save yet.
+3. Invoke **Remove and Sort Usings**, then **Format Document**. Show `@using System.Text` removed, the nearby heading markup aligned, and `@if(error is not null)` becoming `@if (error is not null)` according to `.editorconfig`. No source-file switch or scrolling to the handler is needed.
+4. Save `ResolutionEditor.razor` once. Show the **Customer follow-up** section appear in the already-open return editor through Hot Reload, without refreshing or navigating. Point out that the selected product, unsaved address, and **Editor instance** remain unchanged.
 
-To repeat, stop the demo app, close these two documents, and discard any unsaved rehearsal edits. While still on `demo/razor-tooling`, restore the committed starting point:
+There is no `Home.razor` edit, overview-page navigation, heading-text change, or live handler rename. Cover refactoring on the overview slide rather than in this short demonstration. The completed component is on `main`; compare with `git diff main -- eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor`. Its precise whitespace may differ with the installed Razor formatter.
+
+To repeat, stop the demo app, close this document, and discard any unsaved rehearsal edits. While still on `demo/razor-tooling`, restore the committed starting point:
 
 ```powershell
-git restore --source=demo/razor-tooling --staged --worktree -- eShopCustomerService.Web\Components\Pages\Home.razor eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor
+git restore --source=demo/razor-tooling --staged --worktree -- eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor
 ```
 
-This discards rehearsal changes in **only those two files**. Do not use it for edits you intend to keep. Reopen the documents, start the app, and prepare the normal browser scenario. No database reset is needed specifically for the Razor edits. To inspect the completed version instead, switch to `main` after restoring the rehearsal files.
+This discards rehearsal changes in **only that component**. Do not use it for edits you intend to keep. Reopen the document, start the app, and prepare the normal browser scenario. No database reset is needed specifically for the Razor edit. To inspect the completed version instead, switch to `main` after restoring the rehearsal file.
 
 ## Code landmarks
 
