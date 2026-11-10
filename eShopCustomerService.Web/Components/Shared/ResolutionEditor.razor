@@ -1,3 +1,4 @@
+@using System.Text
 @inject ReturnStore Store
 @inject NavigationManager Navigation
 @inject ILogger<ResolutionEditor> Logger
@@ -82,7 +83,16 @@
         <div class="notice subtle"><Icon Name="shield" /><span>The amount and payment reference must match the original order.</span></div>
         <AuthorizeView Policy="@DemoAuthentication.RefundPolicy">
             <Authorized>
-                <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? "Saving draft..." : "Review refund") <Icon Name="arrow" /></button></div>
+                <div class="editor-footer">
+                    <span>No real payment is issued.</span>
+                  <button class="button"
+type="button"
+                      @onclick="SaveRefundAsync"
+ disabled="@InteractionUnavailable">
+                        @(saving ? "Saving draft..." : "Review refund")
+                        <Icon Name="arrow" />
+                    </button>
+                </div>
             </Authorized>
             <NotAuthorized>
                 <div class="notice error" role="status">Refund approval is no longer available for this session. Your edits are preserved; you can still prepare a replacement.</div>
@@ -131,12 +141,12 @@
         try
         {
             var user = (await AuthenticationState).User;
-            if (!user.IsInRole("Representative"))
+            if(!user.IsInRole("Representative"))
             {
                 error = "Your representative session is no longer available. Sign in again.";
                 return;
             }
-            if (resolution.Value is RefundResolution
+            if(resolution.Value is RefundResolution
                 && !(await Authorization.AuthorizeAsync(user, DemoAuthentication.RefundPolicy)).Succeeded)
             {
                 error = "Refund approval is required. Your unsaved work has been preserved.";
