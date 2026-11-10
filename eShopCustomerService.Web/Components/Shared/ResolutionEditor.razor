@@ -16,7 +16,20 @@
         <a href="/auth-refresh" target="_blank" rel="noopener">Open permission controls <span aria-hidden="true">&nearr;</span></a></div>
 </section>
 <section class="panel editor-panel">
-    <div class="panel-heading"><div><h2>Choose the right resolution</h2><p>Choose the outcome that works for the customer.</p></div><span class="step-label">01 / PREPARE</span></div>
+    <div class="panel-heading">
+        <div>
+            <h2>Resolve this return</h2>
+            <p>Choose the outcome that works for the customer.</p>
+        </div>
+        <span class="step-label">01 / PREPARE</span>
+    </div>
+
+    <h3>Customer follow-up</h3>
+    <ul>
+        <li>Confirm symptoms</li>
+        <li>Check replacement availability</li>
+        <li>Review before confirmation</li>
+    </ul>
     <div class="resolution-choices" role="group" aria-label="Resolution type">
         <button type="button" class="choice @(kind == "refund" ? "selected" : "")" aria-pressed="@(kind == "refund")" @onclick='() => kind = "refund"' disabled="@InteractionUnavailable">
             <Icon Name="money" /><strong>Refund</strong><span>Return to original payment</span>
@@ -86,7 +99,7 @@
                     <span>No real payment is issued.</span>
                     <button class="button"
                             type="button"
-                            @onclick="ReviewRefundAsync"
+                            @onclick="SaveRefundAsync"
                             disabled="@InteractionUnavailable">
                         @(saving ? "Saving draft..." : "Review refund")
                         <Icon Name="arrow" />
@@ -130,7 +143,7 @@
     private Task SaveReplacementAsync() => SaveAsync(new Resolution(
         new ReplacementResolution(model.ProductCode, model.DeliveryAddress)));
 
-    private Task ReviewRefundAsync() => SaveAsync(new Resolution(
+    private Task SaveRefundAsync() => SaveAsync(new Resolution(
         new RefundResolution(Order.PaidAmount, $"PAY-{Order.OrderId}")));
 
     private async Task SaveAsync(Resolution resolution)
