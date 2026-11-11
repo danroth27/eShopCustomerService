@@ -1,44 +1,56 @@
 using System.ClientModel.Primitives;
 using System.Security.Claims;
+using System.Text.Json;
+using AGUI.Abstractions;
 using AGUI.Server;
 using Azure.Identity;
+using eShopCustomerService.Contracts;
+using eShopCustomerService.AgentServer.Services;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.Extensions.AI;
 using OpenAI;
-using OpenAI.Chat;
 using Microsoft.Extensions.Http.Resilience;
-using eShopCustomerService.Web.Services;
 
-namespace eShopCustomerService.Web.Agentic;
+namespace eShopCustomerService.AgentServer.Agentic;
 
 public static class AgentHosting
 {
-    public static void AddCustomerServiceAgent(this IServiceCollection services, IConfiguration configuration)
+    public static void AddAgentService(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddScoped<AgentConnection>();
-        services.AddHttpClient("agentic", http =>
+        services.AddHttpContextAccessor();
+        services.AddSingleton<ICustomerServiceClient, CustomerServiceClient>();
+        services.AddHttpClient("customerservice", http =>
         {
-            if (configuration["Agentic:ServiceUrl"] is { Length: > 0 } url)
+            var endpoint = new Uri(configuration["CustomerService:ApiUrl"]
+                ?? throw new InvalidOperationException("The customer-service application URL is required."));
+            if (!endpoint.IsLoopback || endpoint.Scheme != Uri.UriSchemeHttps)
             {
-                var endpoint = new Uri(url);
-                if (!endpoint.IsLoopback || endpoint.Scheme != Uri.UriSchemeHttps)
-                {
-                    throw new InvalidOperationException("The local agent transport requires a loopback HTTPS service URL.");
-                }
-                http.BaseAddress = endpoint;
+                throw new InvalidOperationException("The local application API requires a loopback HTTPS URL.");
             }
-            http.Timeout = TimeSpan.FromMinutes(3);
+            http.BaseAddress = endpoint;
         }).RemoveAllResilienceHandlers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
 
-        if (string.IsNullOrWhiteSpace(configuration["Agentic:FoundryEndpoint"]))
+        services.AddSingleton<IChatClient>(services =>
         {
-            return;
-        }
-        services.AddHttpContextAccessor();
-        services.AddSingleton<CaseTools>();
+            var endpoint = configuration["Foundry:Endpoint"]
+                ?? throw new InvalidOperationException("Configure the Foundry endpoint through the AppHost's user secrets.");
+            var client = new OpenAIClient(
+                new BearerTokenPolicy(new DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"),
+                new OpenAIClientOptions { Endpoint = new Uri(new Uri(endpoint), "openai/v1/") });
+            return client.GetChatClient(configuration["Foundry:Model"] ?? "gpt-5-mini")
+                .AsIChatClient()
+                .AsBuilder()
+                .UseLogging(services.GetRequiredService<ILoggerFactory>())
+                .Build();
+        });
+        services.AddAuthentication("Representative")
+            .AddScheme<AuthenticationSchemeOptions, RepresentativeAuthenticationHandler>("Representative", _ => { });
+        services.AddAuthorization(options => options.AddPolicy("CustomerService", policy =>
+            policy.RequireAuthenticatedUser().RequireRole("Representative")));
         services.AddKeyedSingleton<AgentSessionStore>("CustomerService", new InMemoryAgentSessionStore());
         services.AddSingleton<AgentIsolationKeyProvider, CaseAgentIsolation>();
         services.AddAGUIServer();
@@ -46,16 +58,8 @@ public static class AgentHosting
 
     public static void MapCustomerServiceAgent(this WebApplication app)
     {
-        if (app.Configuration["Agentic:FoundryEndpoint"] is not { Length: > 0 } endpoint)
-        {
-            return;
-        }
-        var model = app.Configuration["Agentic:Model"] ?? "gpt-5-mini";
-        var client = new OpenAIClient(
-            new BearerTokenPolicy(new DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"),
-            new OpenAIClientOptions { Endpoint = new Uri(new Uri(endpoint), "openai/v1/") });
-        var tools = app.Services.GetRequiredService<CaseTools>();
-        var agent = client.GetChatClient(model).AsAIAgent(new ChatClientAgentOptions
+        var tools = app.Services.GetRequiredService<ICustomerServiceClient>();
+        var agent = app.Services.GetRequiredService<IChatClient>().AsAIAgent(new ChatClientAgentOptions
         {
             Name = "CustomerService",
             ChatHistoryProvider = CreateAguiHistoryProvider(),
@@ -76,6 +80,13 @@ public static class AgentHosting
                     The proposed customer reply must describe a replacement awaiting approval. Never claim that it
                     has been shipped, promise an arrival date, or imply that an unsent reply reached the customer.
                     After preparing, respond in one sentence; the workspace already shows the details.
+                    When asked only to edit, revise, or preview the customer reply, call the frontend tool
+                    propose_customer_reply with the complete revised reply. Do not call prepare_resolution
+                    or confirm_resolution for reply-only edits. A saved replacement draft must exist first.
+                    Preserve the latest workspace reply except for the requested edits. Leave accepted unset:
+                    the UI collects the user's decision. After acceptance or discard, briefly acknowledge
+                    the result and stop. Never propose another edit or prepare or confirm during that continuation.
+                    Accepting reply edits only keeps text in the workspace; it does not send a message or approve a replacement.
                     When asked to show the resolution review, call the frontend tool show_resolution_review
                     for the existing draft, then briefly acknowledge its result. Do not prepare a new draft or confirm.
                     If no draft exists yet, explain that one must be prepared first.
@@ -101,11 +112,18 @@ public static class AgentHosting
         });
         app.MapAGUIServer("/api/agents/returns/{orderId:int}", new CaseStateAgent(agent))
             .WithMetadata(new AGUIStreamOptions()
-                .MapResultAsStateSnapshot("prepare_resolution")
-                .MapResultAsStateSnapshot("confirm_resolution"))
+                .MapResult("prepare_resolution", MapWorkspaceStateSnapshot)
+                .MapResult("confirm_resolution", MapWorkspaceStateSnapshot))
             .RequireAuthorization("CustomerService")
             .ExcludeFromDescription();
     }
+
+    private static IEnumerable<BaseEvent> MapWorkspaceStateSnapshot(FunctionResultContent result) =>
+        // Rejection and tool errors remain tool results, not replacement workspace state.
+        result.Result is JsonElement { ValueKind: JsonValueKind.Object } state
+            && state.TryGetProperty("orderId", out _) && state.TryGetProperty("status", out _)
+            ? [new StateSnapshotEvent { Snapshot = state }]
+            : [];
 
     public static ChatHistoryProvider CreateAguiHistoryProvider() =>
         // AG-UI supplies full history. Keep approval state, not a duplicate server-side transcript.
@@ -120,7 +138,7 @@ public static class AgentHosting
         public override ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken = default)
         {
             var context = accessor.HttpContext;
-            var session = context?.User.FindFirstValue(DemoAuthentication.SessionClaim);
+            var session = context?.User.FindFirstValue(AgentIdentityResponse.SessionClaim);
             return ValueTask.FromResult<string?>(
                 context?.User.Identity?.IsAuthenticated == true && session is not null
                     && context.Request.RouteValues["orderId"] is { } orderId

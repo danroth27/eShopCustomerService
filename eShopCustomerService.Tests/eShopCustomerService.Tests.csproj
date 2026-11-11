@@ -20,4 +20,9 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\eShopCustomerService.AgentServer\eShopCustomerService.AgentServer.csproj" />
+    <ProjectReference Include="..\eShopCustomerService.Api\eShopCustomerService.Api.csproj" />
+  </ItemGroup>
+
 </Project>

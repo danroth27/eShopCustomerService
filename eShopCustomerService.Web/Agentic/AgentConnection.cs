@@ -14,7 +14,7 @@ public sealed class AgentConnection(
     IOptionsMonitor<CookieAuthenticationOptions> cookieOptions, IConfiguration configuration,
     ILogger<AgentConnection> logger)
 {
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(configuration["Agentic:FoundryEndpoint"]);
+    public bool IsConfigured => !string.IsNullOrWhiteSpace(configuration["Agentic:ServiceUrl"]);
 
     public IChatClient Create(int orderId, ClaimsPrincipal user)
     {
@@ -28,8 +28,8 @@ public sealed class AgentConnection(
             new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(30) },
             CookieAuthenticationDefaults.AuthenticationScheme);
         var http = clients.CreateClient("agentic");
-        // This cookie stays on the server. The ordinary cookie handler revalidates the demo session
-        // on every AG-UI request, including approval continuation; no circuit HttpContext is used.
+        // The agent forwards this server-side cookie to the application API, which owns
+        // session validation. No cookie keys or session database are shared with the agent.
         http.DefaultRequestHeaders.Add("Cookie",
             $"{options.Cookie.Name}={options.TicketDataFormat.Protect(ticket)}");
         return new MarkdownChatClient(new ServiceAgentChatClient(

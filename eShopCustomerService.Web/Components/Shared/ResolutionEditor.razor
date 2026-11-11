@@ -1,4 +1,4 @@
-@inject ReturnStore Store
+@inject WorkspaceService Store
 @inject NavigationManager Navigation
 @inject ILogger<ResolutionEditor> Logger
 @inject IAuthorizationService Authorization
@@ -142,7 +142,7 @@
                 error = "Refund approval is required. Your unsaved work has been preserved.";
                 return;
             }
-            var result = await Store.SaveDraftAsync(new(Order.OrderId, resolution), user.Identity!.Name!);
+            var result = await Store.SaveDraftAsync(new(Order.OrderId, resolution));
             switch (result)
             {
                 case ResolutionDraft draft:

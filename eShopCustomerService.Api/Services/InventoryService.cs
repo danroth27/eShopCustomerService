@@ -1,8 +1,9 @@
-using eShopCustomerService.Web.Data;
+using eShopCustomerService.Api.Data;
+using eShopCustomerService.Contracts.Domain;
 
-namespace eShopCustomerService.Web.Domain;
+namespace eShopCustomerService.Api.Services;
 
-public sealed class InventoryService(ReturnStore store, IConfiguration configuration)
+public sealed class InventoryService(ReturnStore store, IConfiguration configuration) : IInventoryService
 {
     public async Task<bool> IsAvailableAsync(string productCode, CancellationToken cancellationToken)
     {

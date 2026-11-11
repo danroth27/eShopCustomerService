@@ -7,9 +7,10 @@
 @using Microsoft.AspNetCore.Components.AI
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.Extensions.AI
+@using eShopCustomerService.Contracts
 @using eShopCustomerService.Web.Agentic
 @inject AgentConnection Connection
-@inject ReturnStore Store
+@inject WorkspaceService Store
 @inject IJSRuntime JS
 
 <PageTitle>Agent workspace | eShop</PageTitle>
@@ -17,10 +18,10 @@
 @if (!Connection.IsConfigured)
 {
     <div class="page-heading"><div><span class="eyebrow">AGENT WORKSPACE</span><h1>Connect your service agent</h1>
-        <p>This optional workspace uses a live Microsoft Foundry model. The rest of eShop works without it.</p></div></div>
+        <p>The workspace needs a connection to the customer-service agent.</p></div></div>
     <section class="panel">
         <h2>One-time local setup</h2>
-        <p>Configure <code>Parameters:agentic-foundry-endpoint</code> and <code>Parameters:agentic-foundry-model</code> in the AppHost's user secrets, authenticate with Azure, and restart your isolated AppHost.</p>
+        <p>Start the AppHost to connect this app to the agent service through <code>Agentic:ServiceUrl</code>. Configure Foundry in the AppHost's user secrets, not in the web frontend.</p>
         <a class="button secondary" href="/returns">Continue with returns &amp; exchanges</a>
     </section>
 }
@@ -56,8 +57,14 @@ else
                 <p class="agent-hint">Your edits become context for the next agent request.</p>
                 <div class="agent-plan-line"><span>Replacement</span><strong>@state.ProductCode</strong></div>
                 <div class="agent-plan-line"><span>Inventory commitment</span><strong>@(state.Status == "Resolved" ? "1 unit allocated locally" : "None yet")</strong></div>
-                <div class="agent-reply"><span class="eyebrow">PROPOSED CUSTOMER REPLY / NOT SENT</span>
-                    <p>@(string.IsNullOrWhiteSpace(state.CustomerReply) ? "Ask the agent to prepare a replacement and draft a reply." : state.CustomerReply)</p></div>
+                <div class="agent-reply @(_agent.State.HasPendingPredictiveState ? "agent-reply-preview" : "")">
+                    <span class="eyebrow">@(_agent.State.HasPendingPredictiveState ? "REPLY EDIT PREVIEW / NOT SENT" : "PROPOSED CUSTOMER REPLY / NOT SENT")</span>
+                    <p>@(string.IsNullOrWhiteSpace(state.CustomerReply) ? "Ask the agent to prepare a replacement and draft a reply." : state.CustomerReply)</p>
+                    @if (_agent.State.HasPendingPredictiveState)
+                    {
+                        <p class="agent-hint">Preview only. Accept the reply edits or discard them to restore the previous text.</p>
+                    }
+                </div>
                 @if (state.DraftId is { } draftId)
                 {
                     <a class="text-button" href="@($"/review/{draftId}")" target="_blank" rel="noopener">Open the saved draft in the existing review workflow &nearr;</a>
@@ -76,20 +83,6 @@ else
             <ChatPage Agent="_agent" Placeholder="Ask the agent to investigate, prepare, or confirm...">
                 <MessageListContent>
                     <AgentControls StatusChanged="ChangeStatus" />
-                    <BlockRenderer TBlock="UIActionBlock" Context="action" When="@(block => block.ToolName == "show_resolution_review")">
-                        <div class="agent-tool-card">
-                            <div class="agent-tool-title"><Icon Name="grid" /><strong>Frontend tool: resolution review</strong></div>
-                            @if (action.IsComplete)
-                            {
-                                <p>Review opened in the Blazor UI. No allocation authorized.</p>
-                            }
-                            else
-                            {
-                                <p>The agent requested a read-only review of the current draft.</p>
-                                <button class="button secondary" @onclick="() => action.InvokeAsync()">Open resolution review</button>
-                            }
-                        </div>
-                    </BlockRenderer>
                     <BlockRenderer TBlock="CaseContextBlock" Context="block">
                         <div class="agent-tool-card">
                             <div class="agent-tool-title"><Icon Name="return" /><strong>@(block.HasResult ? "Case evidence retrieved" : "Checking order, carrier history, and stock...")</strong></div>
@@ -104,6 +97,41 @@ else
                                 {
                                     <div class="agent-evidence-line" @key="entry.Id">@entry.Action</div>
                                 }
+                            }
+                        </div>
+                    </BlockRenderer>
+                    <BlockRenderer TBlock="UIActionBlock" Context="action" When="@(block => block.ToolName == "propose_customer_reply")">
+                        <div class="agent-tool-card">
+                            <div class="agent-tool-title"><Icon Name="grid" /><strong>Review reply edits</strong></div>
+                            @if (action.IsComplete)
+                            {
+                                <p>@action.Result?.Result</p>
+                            }
+                            else if (_agent.State.HasPendingPredictiveState)
+                            {
+                                <p>The reply preview is in the shared workspace. Accepting edits does not send the reply or approve the replacement.</p>
+                                <div class="agent-approval-actions">
+                                    <button class="button secondary" disabled="@_reviewingReply" @onclick="() => ReviewReplyAsync(action, false)">Discard reply edits</button>
+                                    <button class="button" disabled="@_reviewingReply" @onclick="() => ReviewReplyAsync(action, true)">Accept reply edits</button>
+                                </div>
+                            }
+                            else
+                            {
+                                <p>This reply preview is no longer pending.</p>
+                            }
+                        </div>
+                    </BlockRenderer>
+                    <BlockRenderer TBlock="UIActionBlock" Context="action" When="@(block => block.ToolName == "show_resolution_review")">
+                        <div class="agent-tool-card">
+                            <div class="agent-tool-title"><Icon Name="grid" /><strong>Frontend tool: resolution review</strong></div>
+                            @if (action.IsComplete)
+                            {
+                                <p>Review opened in the Blazor UI. No allocation authorized.</p>
+                            }
+                            else
+                            {
+                                <p>The agent requested a read-only review of the current draft.</p>
+                                <button class="button secondary" @onclick="() => action.InvokeAsync()">Open resolution review</button>
                             }
                         </div>
                     </BlockRenderer>
@@ -165,6 +193,7 @@ else
     private ElementReference _chatPanel;
     private AgentWorkspaceScroll? _scroll;
     private CaseWorkspaceState? _reviewState;
+    private bool _reviewingReply;
     [Parameter] public int OrderId { get; set; }
     [CascadingParameter] private Task<AuthenticationState> Authentication { get; set; } = default!;
 
@@ -186,6 +215,11 @@ else
         _agent = new UIAgent<CaseWorkspaceState>(_chatClient, options =>
         {
             options.RegisterUIAction(AIFunctionFactory.Create(
+                (string customerReply, bool? accepted = null) =>
+                    CaseWorkspaceUpdates.ReviewReply(_agent!.State, customerReply, accepted),
+                name: "propose_customer_reply",
+                description: "Preview a complete revised customer reply for the user to accept or discard. Does not change the replacement draft, send a message, or allocate stock. Leave accepted unset; the user decides."));
+            options.RegisterUIAction(AIFunctionFactory.Create(
                 ShowResolutionReview,
                 name: "show_resolution_review",
                 description: "Open a read-only resolution review in the Blazor UI for the current saved draft. Does not approve, allocate inventory, or send a message."));
@@ -198,18 +232,7 @@ else
                     State = JsonSerializer.SerializeToElement(_agent!.State.Value, JsonOptions)
                 }
             };
-            options.StateMapper = context =>
-            {
-                if (context.Update.RawRepresentation is StateSnapshotEvent snapshot
-                    && snapshot.Snapshot.Deserialize<CaseWorkspaceState>(JsonOptions) is { } state)
-                {
-                    var prior = _agent!.State.Value;
-                    context.SetState(state with
-                    {
-                        CustomerReply = state.Status == "Resolved" ? prior.CustomerReply : state.CustomerReply
-                    });
-                }
-            };
+            options.StateMapper = context => CaseWorkspaceUpdates.Map(context, _agent!.State);
         }, new()
         {
             OrderId = OrderId,
@@ -239,6 +262,25 @@ else
     }
 
     private void ChangeStatus(ConversationStatus status) => _status = status;
+
+    private async Task ReviewReplyAsync(UIActionBlock action, bool accepted)
+    {
+        if (_reviewingReply || action.IsComplete)
+        {
+            return;
+        }
+        _reviewingReply = true;
+        try
+        {
+            action.Call.Arguments ??= new Dictionary<string, object?>();
+            action.Call.Arguments["accepted"] = accepted;
+            await action.InvokeAsync();
+        }
+        finally
+        {
+            _reviewingReply = false;
+        }
+    }
 
     private string ShowResolutionReview()
     {

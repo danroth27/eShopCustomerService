@@ -4,7 +4,7 @@ using AGUI.Server;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-namespace eShopCustomerService.Web.Agentic;
+namespace eShopCustomerService.AgentServer.Agentic;
 
 public sealed class CaseStateAgent(AIAgent innerAgent) : DelegatingAIAgent(innerAgent)
 {

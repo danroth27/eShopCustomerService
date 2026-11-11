@@ -1,9 +1,10 @@
 using System.Globalization;
-using eShopCustomerService.Web.Data;
-using eShopCustomerService.Web.Domain;
+using eShopCustomerService.Contracts;
+using eShopCustomerService.Api.Data;
+using eShopCustomerService.Contracts.Domain;
 using Microsoft.AspNetCore.Authorization;
 
-namespace eShopCustomerService.Web.Agentic;
+namespace eShopCustomerService.Api.Agentic;
 
 public sealed class CaseTools(
     ReturnStore store, IHttpContextAccessor accessor,
@@ -20,7 +21,7 @@ public sealed class CaseTools(
     {
         await RequireRepresentativeAsync();
         var order = await store.GetCaseAsync(OrderId, cancellationToken)
-            ?? throw Reject("The selected order was not found.");
+            ?? throw Reject("The selected order was not found.", StatusCodes.Status404NotFound);
         return new(order, await store.GetInventoryAsync(cancellationToken),
             await store.GetAuditAsync(OrderId, cancellationToken));
     }
@@ -43,7 +44,7 @@ public sealed class CaseTools(
                 DraftId = draft.Id,
                 Status = "Draft"
             },
-            ResolutionFailure failure => throw Reject(failure.Message)
+            ResolutionFailure failure => throw Reject(failure)
         };
     }
 
@@ -52,7 +53,7 @@ public sealed class CaseTools(
     {
         await RequireRepresentativeAsync();
         var draft = await store.GetDraftAsync(draftId, cancellationToken)
-            ?? throw Reject("The resolution draft was not found.");
+            ?? throw Reject("The resolution draft was not found.", StatusCodes.Status404NotFound);
         if (draft.OrderId != OrderId
             || draft.Resolution.Value is not ReplacementResolution replacement
             || replacement.ProductCode != productCode
@@ -72,7 +73,7 @@ public sealed class CaseTools(
                 DraftId = draftId,
                 Status = "Resolved"
             },
-            ResolutionFailure failure => throw Reject(failure.Message)
+            ResolutionFailure failure => throw Reject(failure)
         };
     }
 
@@ -80,13 +81,21 @@ public sealed class CaseTools(
     {
         if (!(await authorization.AuthorizeAsync(Request.User, "CustomerService")).Succeeded)
         {
-            throw Reject("A current representative session is required.");
+            throw Reject("A current representative session is required.", StatusCodes.Status403Forbidden);
         }
     }
 
-    private InvalidOperationException Reject(string message)
+    private CaseToolException Reject(ResolutionFailure failure) => Reject(failure.Message, failure.Kind switch
+    {
+        ResolutionFailureKind.Invalid => StatusCodes.Status400BadRequest,
+        ResolutionFailureKind.NotFound => StatusCodes.Status404NotFound,
+        ResolutionFailureKind.Conflict => StatusCodes.Status409Conflict,
+        _ => throw new ArgumentOutOfRangeException(nameof(failure))
+    });
+
+    private CaseToolException Reject(string message, int statusCode = StatusCodes.Status409Conflict)
     {
         logger.LogWarning("Agent operation rejected for order {OrderId}: {Reason}", OrderId, message);
-        return new(message);
+        return new(message, statusCode);
     }
 }

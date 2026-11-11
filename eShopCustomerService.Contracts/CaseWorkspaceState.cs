@@ -1,6 +1,4 @@
-using eShopCustomerService.Web.Domain;
-
-namespace eShopCustomerService.Web.Agentic;
+namespace eShopCustomerService.Contracts;
 
 public sealed record CaseWorkspaceState
 {
@@ -11,6 +9,3 @@ public sealed record CaseWorkspaceState
     public Guid? DraftId { get; init; }
     public string Status { get; init; } = "Investigating";
 }
-
-public sealed record CaseContext(
-    ReturnCase Order, IReadOnlyList<InventoryItem> Inventory, IReadOnlyList<AuditEntry> Activity);

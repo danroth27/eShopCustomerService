@@ -1,7 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.Extensions.Validation;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace eShopCustomerService.Web.Domain;
+namespace eShopCustomerService.Contracts.Domain;
 
 [ValidatableType]
 public sealed class ReplacementRequest
@@ -24,9 +25,20 @@ public sealed class InStockAttribute : AsyncValidationAttribute
     protected override async Task<ValidationResult?> IsValidAsync(
         object? value, ValidationContext context, CancellationToken cancellationToken)
     {
-        var inventory = context.GetRequiredService<InventoryService>();
+        var inventory = context.GetRequiredService<IInventoryService>();
         return value is string code && await inventory.IsAvailableAsync(code, cancellationToken)
             ? ValidationResult.Success
             : new ValidationResult("This model is currently unavailable. Choose an available alternative.");
     }
+}
+
+public interface IInventoryService
+{
+    Task<bool> IsAvailableAsync(string productCode, CancellationToken cancellationToken);
+}
+
+public static class CustomerServiceValidation
+{
+    public static IServiceCollection AddCustomerServiceValidation(this IServiceCollection services) =>
+        services.AddValidation();
 }

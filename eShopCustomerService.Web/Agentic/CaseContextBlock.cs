@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Components.AI;
 using System.Text.Json;
 
+using eShopCustomerService.Contracts;
+
 namespace eShopCustomerService.Web.Agentic;
 
 [ToolBlock("get_case_context")]

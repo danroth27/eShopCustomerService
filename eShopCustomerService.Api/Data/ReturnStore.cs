@@ -1,9 +1,9 @@
 using System.Globalization;
 using System.Text.Json;
-using eShopCustomerService.Web.Domain;
+using eShopCustomerService.Contracts.Domain;
 using Microsoft.Data.Sqlite;
 
-namespace eShopCustomerService.Web.Data;
+namespace eShopCustomerService.Api.Data;
 
 public sealed class ReturnStore : IDisposable
 {

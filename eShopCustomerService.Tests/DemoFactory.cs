@@ -1,13 +1,23 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using eShopCustomerService.Api;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace eShopCustomerService.Tests;
 
-public sealed class DemoFactory(string? databasePath = null, bool deleteOnDispose = true) : WebApplicationFactory<Program>
+public sealed class DemoFactory : WebApplicationFactory<Program>
 {
-    public string DatabasePath { get; } = databasePath
-        ?? Path.Combine(Path.GetTempPath(), $"eshop-returns-{Guid.NewGuid():N}.db");
+    private readonly bool deleteOnDispose;
+    public string DatabasePath { get; }
+    public ApiFactory Api { get; }
+
+    public DemoFactory(string? databasePath = null, bool deleteOnDispose = true)
+    {
+        DatabasePath = databasePath ?? Path.Combine(Path.GetTempPath(), $"eshop-returns-{Guid.NewGuid():N}.db");
+        Api = new(DatabasePath);
+        this.deleteOnDispose = deleteOnDispose;
+    }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -15,9 +25,10 @@ public sealed class DemoFactory(string? databasePath = null, bool deleteOnDispos
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
             new Dictionary<string, string?>
             {
-                ["Demo:DatabasePath"] = DatabasePath,
-                ["Demo:ValidationDelayMilliseconds"] = "0"
+                ["CustomerService:ApiUrl"] = "https://localhost"
             }));
+        builder.ConfigureServices(services => services.AddHttpClient("application-api")
+            .ConfigurePrimaryHttpMessageHandler(() => Api.Server.CreateHandler()));
     }
 
     public HttpClient Browser() => CreateClient(new WebApplicationFactoryClientOptions
@@ -41,9 +52,27 @@ public sealed class DemoFactory(string? databasePath = null, bool deleteOnDispos
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        if (disposing && deleteOnDispose)
+        if (disposing)
         {
-            File.Delete(DatabasePath);
+            Api.Dispose();
+            if (deleteOnDispose)
+            {
+                File.Delete(DatabasePath);
+            }
         }
+    }
+}
+
+public sealed class ApiFactory(string databasePath) : WebApplicationFactory<ApiProgram>
+{
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseEnvironment("Development");
+        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["Demo:DatabasePath"] = databasePath,
+                ["Demo:ValidationDelayMilliseconds"] = "0"
+            }));
     }
 }

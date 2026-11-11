@@ -1,6 +1,6 @@
 @page "/review/{DraftId:guid}"
 @attribute [Authorize(Policy = "CustomerService")]
-@inject ReturnStore Store
+@inject WorkspaceService Store
 @inject IConfiguration Configuration
 
 <PageTitle>Review resolution | eShop</PageTitle>
