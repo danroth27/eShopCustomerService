@@ -15,16 +15,18 @@ public static class CaseWorkspaceUpdates
         {
             context.SetState(updated with
             {
-                CustomerReply = updated.Status == "Resolved" ? state.Value.CustomerReply : updated.CustomerReply
+                CustomerReply = updated.Status == "Resolved" ? state.Value.CustomerReply : updated.CustomerReply,
+                RefundApprovalAllowed = state.Value.RefundApprovalAllowed,
+                AvailableProducts = state.Value.AvailableProducts
             });
         }
 
         foreach (var call in context.Update.Contents.OfType<FunctionCallContent>()
             .Where(call => call.Name == "propose_customer_reply"))
         {
-            if (state.Value is not { Status: "Draft", DraftId: not null })
+            if (state.Value.Status == "Resolved")
             {
-                throw new InvalidOperationException("Prepare a replacement draft before proposing reply edits.");
+                throw new InvalidOperationException("This resolution is already confirmed.");
             }
             if (call.Arguments?.TryGetValue("customerReply", out var value) != true
                 || value is not JsonElement { ValueKind: JsonValueKind.String } element
@@ -34,6 +36,32 @@ public static class CaseWorkspaceUpdates
             }
             context.SetPredictiveState(state.Value with { CustomerReply = element.GetString()! });
         }
+    }
+
+    public static CaseWorkspaceState Edit(
+        CaseWorkspaceState state, string? resolutionKind = null, string? productCode = null,
+        string? deliveryAddress = null, string? customerReply = null)
+    {
+        if (state.Status == "Resolved")
+        {
+            throw new InvalidOperationException("This resolution is already confirmed.");
+        }
+        if (resolutionKind is not (null or "refund" or "replacement"))
+        {
+            throw new ArgumentException("Choose refund or replacement.", nameof(resolutionKind));
+        }
+        var updated = state with
+        {
+            ResolutionKind = resolutionKind ?? state.ResolutionKind,
+            ProductCode = productCode ?? state.ProductCode,
+            DeliveryAddress = deliveryAddress ?? state.DeliveryAddress,
+            CustomerReply = customerReply ?? state.CustomerReply
+        };
+        var resolutionChanged = updated.ResolutionKind != state.ResolutionKind
+            || updated.ProductCode != state.ProductCode || updated.DeliveryAddress != state.DeliveryAddress;
+        return resolutionChanged
+            ? updated with { Status = "Editing", ValidationMessages = [], ValidationPending = false }
+            : updated;
     }
 
     public static string ReviewReply(AgentState<CaseWorkspaceState> state, string customerReply, bool? accepted)

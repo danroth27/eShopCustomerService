@@ -26,18 +26,12 @@ public sealed record ResetDemoRequest
 /// <summary>Confirms a saved draft using the application's authoritative business rules.</summary>
 public sealed record ConfirmDraftRequest(Guid DraftId);
 
-/// <summary>Prepares a replacement draft and an unsent customer reply.</summary>
-public sealed record PrepareResolutionRequest
-{
-    [Required] public required string ProductCode { get; init; }
-    [Required] public required string DeliveryAddress { get; init; }
-    [Required] public required string CustomerReply { get; init; }
-}
-
-/// <summary>Confirms the exact replacement details reviewed by the representative.</summary>
+/// <summary>Confirms the exact resolution details reviewed by the representative.</summary>
 public sealed record ConfirmResolutionRequest
 {
-    public required Guid DraftId { get; init; }
-    [Required] public required string ProductCode { get; init; }
-    [Required] public required string DeliveryAddress { get; init; }
+    public required string ProductCode { get; init; }
+    public required string DeliveryAddress { get; init; }
+    public string ResolutionKind { get; init; } = "replacement";
+    public decimal? RefundAmount { get; init; }
+    public string? PaymentReference { get; init; }
 }

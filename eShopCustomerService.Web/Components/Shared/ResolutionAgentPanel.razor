@@ -1,0 +1,48 @@
+@using Microsoft.AspNetCore.Components.AI
+@using eShopCustomerService.Contracts
+@using eShopCustomerService.Web.Agentic
+@using eShopCustomerService.Web.Components.Pages
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<section class="panel agent-chat-panel" @ref="_panel">
+    <div class="panel-heading">
+        <div><span class="eyebrow">SERVICE AGENT</span><h2>Work the case together</h2></div>
+        <span class="badge">@(Status switch { ConversationStatus.AwaitingInput => "Your input", ConversationStatus.Streaming => "Working", ConversationStatus.Error => "Needs attention", _ => "Ready" })</span>
+    </div>
+    <p class="agent-chat-intro">The agent shares this resolution editor. Ask it to investigate, edit fields, or help draft your response.</p>
+    <fieldset class="agent-chat-controls" disabled="@(!RendererInfo.IsInteractive || Saving || Agent.State.Value.Status == "Resolved")">
+        <ChatPage Agent="Agent" Placeholder="Ask the agent to help with this resolution...">
+            <MessageListContent>
+                <AgentControls StatusChanged="StatusChanged" />
+                <ResolutionToolRenderers Agent="Agent" />
+            </MessageListContent>
+        </ChatPage>
+    </fieldset>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public UIAgent<CaseWorkspaceState> Agent { get; set; } = default!;
+    [Parameter] public ConversationStatus Status { get; set; }
+    [Parameter] public EventCallback<ConversationStatus> StatusChanged { get; set; }
+    [Parameter] public bool Saving { get; set; }
+    private ElementReference _panel;
+    private AgentWorkspaceScroll? _scroll;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_scroll is null)
+        {
+            _scroll = new(JS);
+            await _scroll.InitializeAsync(_panel);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_scroll is not null)
+        {
+            await _scroll.DisposeAsync();
+        }
+    }
+}

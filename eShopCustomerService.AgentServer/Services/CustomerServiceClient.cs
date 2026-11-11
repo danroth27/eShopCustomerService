@@ -9,10 +9,9 @@ public interface ICustomerServiceClient
 {
     Task<AgentIdentityResponse?> GetIdentityAsync(CancellationToken cancellationToken);
     Task<CaseContext> GetCaseContextAsync(CancellationToken cancellationToken);
-    Task<CaseWorkspaceState> PrepareResolutionAsync(
-        string productCode, string deliveryAddress, string customerReply, CancellationToken cancellationToken);
     Task<CaseWorkspaceState> ConfirmResolutionAsync(
-        Guid draftId, string productCode, string deliveryAddress, CancellationToken cancellationToken);
+        string productCode, string deliveryAddress, CancellationToken cancellationToken,
+        string resolutionKind = "replacement", decimal? refundAmount = null, string? paymentReference = null);
 }
 
 public sealed class CustomerServiceClient(
@@ -40,28 +39,18 @@ public sealed class CustomerServiceClient(
         return await ReadAsync<CaseContext>(response, cancellationToken);
     }
 
-    public async Task<CaseWorkspaceState> PrepareResolutionAsync(
-        string productCode, string deliveryAddress, string customerReply, CancellationToken cancellationToken)
-    {
-        using var response = await SendAsync(HttpMethod.Post, $"/api/agent-tools/returns/{OrderId}/prepare",
-            new PrepareResolutionRequest
-            {
-                ProductCode = productCode,
-                DeliveryAddress = deliveryAddress,
-                CustomerReply = customerReply
-            }, cancellationToken);
-        return await ReadAsync<CaseWorkspaceState>(response, cancellationToken);
-    }
-
     public async Task<CaseWorkspaceState> ConfirmResolutionAsync(
-        Guid draftId, string productCode, string deliveryAddress, CancellationToken cancellationToken)
+        string productCode, string deliveryAddress, CancellationToken cancellationToken,
+        string resolutionKind = "replacement", decimal? refundAmount = null, string? paymentReference = null)
     {
         using var response = await SendAsync(HttpMethod.Post, $"/api/agent-tools/returns/{OrderId}/confirm",
             new ConfirmResolutionRequest
             {
-                DraftId = draftId,
                 ProductCode = productCode,
-                DeliveryAddress = deliveryAddress
+                DeliveryAddress = deliveryAddress,
+                ResolutionKind = resolutionKind,
+                RefundAmount = refundAmount,
+                PaymentReference = paymentReference
             }, cancellationToken);
         return await ReadAsync<CaseWorkspaceState>(response, cancellationToken);
     }

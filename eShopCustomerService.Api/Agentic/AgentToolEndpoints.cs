@@ -39,16 +39,10 @@ public static class AgentToolEndpoints
         });
         tools.MapGet("/returns/{orderId:int}", async (CaseTools service, CancellationToken ct) =>
             TypedResults.Ok(await service.GetCaseContextAsync(ct)));
-        tools.MapPost("/returns/{orderId:int}/prepare", async (
-            PrepareResolutionRequest request, CaseTools service, CancellationToken ct) =>
-        {
-            var draft = await service.PrepareResolutionAsync(
-                request.ProductCode, request.DeliveryAddress, request.CustomerReply, ct);
-            return TypedResults.Created($"/api/drafts/{draft.DraftId}", draft);
-        });
         tools.MapPost("/returns/{orderId:int}/confirm", async (
             ConfirmResolutionRequest request, CaseTools service, CancellationToken ct) =>
             TypedResults.Ok(await service.ConfirmResolutionAsync(
-                request.DraftId, request.ProductCode, request.DeliveryAddress, ct)));
+                request.ProductCode, request.DeliveryAddress, ct,
+                request.ResolutionKind, request.RefundAmount, request.PaymentReference)));
     }
 }

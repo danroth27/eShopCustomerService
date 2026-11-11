@@ -1,7 +1,9 @@
 @page "/returns/{OrderId:int}"
+@page "/agentic/{OrderId:int}"
 @attribute [Authorize(Policy = "CustomerService")]
 @rendermode InteractiveServer
 @inject WorkspaceService Store
+@inject eShopCustomerService.Web.Agentic.AgentConnection Connection
 
 <PageTitle>Return #@OrderId | eShop</PageTitle>
 
@@ -21,10 +23,10 @@ else
     {
         <div class="notice success" role="status"><Icon Name="check" /><span>The return is resolved and the activity history is up to date. No real payment or shipment was processed.</span></div>
     }
-    <div class="workspace-grid">
+    <div class="workspace-grid @(Connection.IsConfigured ? "agent-enabled" : "")">
         <div class="order-context">
             <section class="panel product-panel">
-                <div class="panel-heading"><h2>Order details</h2><span class="badge neutral">Delivered</span></div>
+                <div class="panel-heading"><h2>Order details</h2><span class="badge neutral">@item.Status</span></div>
                 <ProductArtwork />
                 <div class="product-title"><div><span class="eyebrow">ORIGINAL PURCHASE</span><h2>@item.Product</h2><code>@item.ProductCode</code></div><strong>@item.PaidAmount.ToString("C", CultureInfo.GetCultureInfo("en-US"))</strong></div>
                 <dl class="facts"><div><dt>Quantity</dt><dd>1 unit</dd></div><div><dt>Return policy</dt><dd>30 days / eligible</dd></div><div><dt>Payment reference</dt><dd>PAY-@item.OrderId</dd></div></dl>
@@ -46,9 +48,9 @@ else
                     <a class="button secondary" href="/">Back to queue <Icon Name="arrow" /></a>
                 </section>
             }
-            else
+            @if (editorOpened)
             {
-                <ResolutionEditor Order="item" @key="item.OrderId" />
+                <ResolutionWorkspace Order="item" Resolved="RefreshAsync" @key="item.OrderId" />
             }
             <section class="panel activity-panel">
                 <div class="panel-heading"><h2>Activity history</h2><span class="badge neutral">Recorded</span></div>
@@ -72,8 +74,15 @@ else
     private ReturnCase? item;
     private IReadOnlyList<AuditEntry> audit = [];
     private bool loaded;
+    private bool editorOpened;
 
     protected override async Task OnParametersSetAsync()
+    {
+        await RefreshAsync();
+        editorOpened = item is { Resolution: null };
+    }
+
+    private async Task RefreshAsync()
     {
         item = await Store.GetCaseAsync(OrderId);
         audit = await Store.GetAuditAsync(OrderId);

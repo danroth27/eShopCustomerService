@@ -3,7 +3,6 @@
 
 <div class="agent-prompt-actions">
     <button class="button secondary" disabled="@Busy" @onclick="Investigate">Investigate</button>
-    <button class="button secondary" disabled="@Busy" @onclick="Prepare">Prepare replacement</button>
     <button class="button secondary" disabled="@Busy" @onclick="Review">Show review</button>
     <button class="button secondary" disabled="@Busy" @onclick="Confirm">Request approval</button>
     @if (Context.Status == ConversationStatus.Streaming)
@@ -19,9 +18,8 @@
     private bool Busy => Context.Status is ConversationStatus.Streaming or ConversationStatus.AwaitingInput;
     protected override void OnInitialized() => _subscription = Context.RegisterOnStatusChanged(Changed);
     private Task Investigate() => Context.SendMessageAsync("Investigate this delayed delivery and recommend a resolution.");
-    private Task Prepare() => Context.SendMessageAsync("Prepare an in-stock replacement using the current workspace delivery address and draft a short customer reply. Do not confirm it.");
-    private Task Review() => Context.SendMessageAsync("Show the saved replacement draft in the resolution review UI. Do not confirm it.");
-    private Task Confirm() => Context.SendMessageAsync("Confirm the saved replacement draft using its exact product code and delivery address.");
+    private Task Review() => Context.SendMessageAsync("Show the current resolution editor in the resolution review UI. Use its current values, including my latest edits and customer reply. Do not confirm it.");
+    private Task Confirm() => Context.SendMessageAsync("Confirm the current resolution using the exact current editor values. Do not change my selected resolution or reply.");
     private async void Changed(ConversationStatus status)
     {
         try

@@ -1,7 +1,8 @@
 @inject WorkspaceService Store
-@inject NavigationManager Navigation
 @inject ILogger<ResolutionEditor> Logger
 @inject IAuthorizationService Authorization
+@using eShopCustomerService.Contracts
+@using eShopCustomerService.Web.Agentic
 @implements IDisposable
 
 <section class="panel auth-refresh-panel">
@@ -18,10 +19,10 @@
 <section class="panel editor-panel">
     <div class="panel-heading"><div><h2>Resolve this return</h2><p>Choose the outcome that works for the customer.</p></div><span class="step-label">01 / PREPARE</span></div>
     <div class="resolution-choices" role="group" aria-label="Resolution type">
-        <button type="button" class="choice @(kind == "refund" ? "selected" : "")" aria-pressed="@(kind == "refund")" @onclick='() => kind = "refund"' disabled="@InteractionUnavailable">
+        <button type="button" class="choice @(State.ResolutionKind == "refund" ? "selected" : "")" aria-pressed="@(State.ResolutionKind == "refund")" @onclick='() => ChangeKindAsync("refund")' disabled="@InteractionUnavailable">
             <Icon Name="money" /><strong>Refund</strong><span>Return to original payment</span>
         </button>
-        <button type="button" class="choice @(kind == "replacement" ? "selected" : "")" aria-pressed="@(kind == "replacement")" @onclick='() => kind = "replacement"' disabled="@InteractionUnavailable">
+        <button type="button" class="choice @(State.ResolutionKind == "replacement" ? "selected" : "")" aria-pressed="@(State.ResolutionKind == "replacement")" @onclick='() => ChangeKindAsync("replacement")' disabled="@InteractionUnavailable">
             <Icon Name="box" /><strong>Replacement</strong><span>Exchange for an available model</span>
         </button>
     </div>
@@ -29,7 +30,7 @@
     {
         <div class="notice error" role="alert">@error</div>
     }
-    @if (kind == "replacement")
+    @if (State.ResolutionKind == "replacement")
     {
         <EditForm EditContext="editContext" OnValidSubmit="SaveReplacementAsync" FormName="replacement">
             <DataAnnotationsValidator />
@@ -39,9 +40,9 @@
             }
             <div class="field">
                 <label for="replacement-product">Replacement model</label>
-                <InputSelect id="replacement-product" @bind-Value="model.ProductCode" disabled="@InteractionUnavailable">
+                <InputSelect id="replacement-product" @bind-Value="model.ProductCode" @bind-Value:after="NotifyFieldsChangedAsync" disabled="@InteractionUnavailable">
                     <option value="">Select a compatible replacement</option>
-                    @foreach (var product in products)
+                    @foreach (var product in State.AvailableProducts)
                     {
                         <option value="@product.ProductCode" @key="product.ProductCode">@product.Name @(product.Available > 0 ? $" / {product.Available} available" : " / currently unavailable")</option>
                     }
@@ -64,13 +65,13 @@
             </div>
             <div class="field">
                 <label for="delivery-address">Delivery address</label>
-                <InputTextArea id="delivery-address" @bind-Value="model.DeliveryAddress" rows="2" disabled="@InteractionUnavailable" />
+                <InputTextArea id="delivery-address" @bind-Value="model.DeliveryAddress" @bind-Value:after="NotifyFieldsChangedAsync" @oninput="AddressInputAsync" rows="2" disabled="@InteractionUnavailable" />
                 <ValidationMessage For="() => model.DeliveryAddress" />
             </div>
             <div class="notice subtle"><Icon Name="shield" /><span>Availability is checked now. Stock is allocated only when you confirm.</span></div>
             <div class="editor-footer"><span>No shipment is created in this demo.</span>
                 <button class="button" type="submit" disabled="@(InteractionUnavailable || ValidationPending)">
-                    @(saving ? "Saving draft..." : ValidationPending ? "Validating..." : "Review replacement") <Icon Name="arrow" />
+                    @(saving ? (ReviewRequested.HasDelegate ? "Opening review..." : "Saving draft...") : ValidationPending ? "Validating..." : "Review replacement") <Icon Name="arrow" />
                 </button>
             </div>
         </EditForm>
@@ -82,7 +83,7 @@
         <div class="notice subtle"><Icon Name="shield" /><span>The amount and payment reference must match the original order.</span></div>
         <AuthorizeView Policy="@DemoAuthentication.RefundPolicy">
             <Authorized>
-                <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? "Saving draft..." : "Review refund") <Icon Name="arrow" /></button></div>
+                <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? (ReviewRequested.HasDelegate ? "Opening review..." : "Saving draft...") : "Review refund") <Icon Name="arrow" /></button></div>
             </Authorized>
             <NotAuthorized>
                 <div class="notice error" role="status">Refund approval is no longer available for this session. Your edits are preserved; you can still prepare a replacement.</div>
@@ -93,30 +94,79 @@
 
 @code {
     [Parameter, EditorRequired] public ReturnCase Order { get; set; } = default!;
+    [Parameter, EditorRequired] public CaseWorkspaceState State { get; set; } = default!;
+    [Parameter] public EventCallback<CaseWorkspaceState> StateChanged { get; set; }
+    [Parameter] public EventCallback<ResolutionDraft> DraftSaved { get; set; }
+    [Parameter] public EventCallback ReviewRequested { get; set; }
+    [Parameter] public EventCallback<bool> SavingChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
     [CascadingParameter] private Task<AuthenticationState> AuthenticationState { get; set; } = default!;
-    private string kind = "replacement";
     private ReplacementRequest model = new();
+    private CaseWorkspaceState? previousState;
     private EditContext editContext = default!;
-    private IReadOnlyList<InventoryItem> products = [];
     private bool saving;
     private readonly string editorInstance = Guid.NewGuid().ToString("N")[..8];
     private string? error;
-    private bool InteractionUnavailable => saving || !RendererInfo.IsInteractive;
+    private bool InteractionUnavailable => saving || Disabled || State.Status == "Resolved" || !RendererInfo.IsInteractive;
     private bool ValidationPending => editContext.IsValidationPending()
         || editContext.IsValidationPending(() => model.ProductCode);
 
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
-        model = new() { OrderId = Order.OrderId, DeliveryAddress = Order.DeliveryAddress };
+        model = new() { OrderId = Order.OrderId, ProductCode = State.ProductCode, DeliveryAddress = State.DeliveryAddress };
         editContext = new(model);
         editContext.OnValidationStateChanged += HandleValidationStateChanged;
-        products = await Store.GetInventoryAsync();
     }
 
-    private void HandleValidationStateChanged(object? sender, ValidationStateChangedEventArgs args) =>
-        _ = InvokeAsync(StateHasChanged);
+    protected override void OnParametersSet()
+    {
+        // Validation can rerender before @bind:after publishes the local field edit.
+        if (previousState is not null
+            && (previousState.ProductCode != State.ProductCode || previousState.DeliveryAddress != State.DeliveryAddress)
+            && (model.ProductCode != State.ProductCode || model.DeliveryAddress != State.DeliveryAddress))
+        {
+            editContext.OnValidationStateChanged -= HandleValidationStateChanged;
+            model = new() { OrderId = Order.OrderId, ProductCode = State.ProductCode, DeliveryAddress = State.DeliveryAddress };
+            editContext = new(model);
+            editContext.OnValidationStateChanged += HandleValidationStateChanged;
+        }
+        previousState = State;
+    }
+
+    private async void HandleValidationStateChanged(object? sender, ValidationStateChangedEventArgs args)
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                await StateChanged.InvokeAsync(State with
+                {
+                    ValidationMessages = editContext.GetValidationMessages().Distinct().ToArray(),
+                    ValidationPending = ValidationPending
+                });
+                StateHasChanged();
+            });
+        }
+        catch (Exception exception)
+        {
+            await DispatchExceptionAsync(exception);
+        }
+    }
 
     public void Dispose() => editContext.OnValidationStateChanged -= HandleValidationStateChanged;
+
+    private Task ChangeKindAsync(string kind) =>
+        StateChanged.InvokeAsync(CaseWorkspaceUpdates.Edit(State, resolutionKind: kind));
+
+    private Task NotifyFieldsChangedAsync() =>
+        StateChanged.InvokeAsync(CaseWorkspaceUpdates.Edit(State,
+            productCode: model.ProductCode, deliveryAddress: model.DeliveryAddress));
+
+    private async Task AddressInputAsync(ChangeEventArgs args)
+    {
+        model.DeliveryAddress = args.Value?.ToString() ?? "";
+        await NotifyFieldsChangedAsync();
+    }
 
     private Task SaveReplacementAsync() => SaveAsync(new Resolution(
         new ReplacementResolution(model.ProductCode, model.DeliveryAddress)));
@@ -127,6 +177,7 @@
     private async Task SaveAsync(Resolution resolution)
     {
         saving = true;
+        await SavingChanged.InvokeAsync(true);
         error = null;
         try
         {
@@ -142,11 +193,16 @@
                 error = "Refund approval is required. Your unsaved work has been preserved.";
                 return;
             }
+            if (ReviewRequested.HasDelegate)
+            {
+                await ReviewRequested.InvokeAsync();
+                return;
+            }
             var result = await Store.SaveDraftAsync(new(Order.OrderId, resolution));
             switch (result)
             {
                 case ResolutionDraft draft:
-                    Navigation.NavigateTo($"/review/{draft.Id}", forceLoad: true);
+                    await DraftSaved.InvokeAsync(draft);
                     break;
                 case ResolutionFailure failure:
                     Logger.LogWarning("Draft rejected for order {OrderId}: {Reason}", Order.OrderId, failure.Message);
@@ -157,6 +213,7 @@
         finally
         {
             saving = false;
+            await SavingChanged.InvokeAsync(false);
         }
     }
 }

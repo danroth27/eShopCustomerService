@@ -3,6 +3,7 @@ using eShopCustomerService.Contracts;
 using eShopCustomerService.Api.Data;
 using eShopCustomerService.Contracts.Domain;
 using Microsoft.AspNetCore.Authorization;
+using eShopCustomerService.Api.Services;
 
 namespace eShopCustomerService.Api.Agentic;
 
@@ -26,55 +27,57 @@ public sealed class CaseTools(
             await store.GetAuditAsync(OrderId, cancellationToken));
     }
 
-    public async Task<CaseWorkspaceState> PrepareResolutionAsync(
-        string productCode, string deliveryAddress, string customerReply, CancellationToken cancellationToken)
+    public async Task<CaseWorkspaceState> ConfirmResolutionAsync(
+        string productCode, string deliveryAddress, CancellationToken cancellationToken,
+        string resolutionKind = "replacement", decimal? refundAmount = null, string? paymentReference = null)
     {
         await RequireRepresentativeAsync();
-        var result = await store.SaveDraftAsync(
-            new(OrderId, new Resolution(new ReplacementResolution(productCode, deliveryAddress))),
+        var order = await store.GetCaseAsync(OrderId, cancellationToken)
+            ?? throw Reject("The selected order was not found.", StatusCodes.Status404NotFound);
+        Resolution resolution;
+        switch (resolutionKind)
+        {
+            case "replacement":
+                resolution = new(new ReplacementResolution(productCode, deliveryAddress));
+                break;
+            case "refund":
+                await RequireRefundApprovalAsync();
+                if (refundAmount != order.PaidAmount || paymentReference != $"PAY-{OrderId}")
+                {
+                    throw Reject("A full refund must match the original payment and paid amount.", StatusCodes.Status400BadRequest);
+                }
+                resolution = new(new RefundResolution(order.PaidAmount, paymentReference));
+                break;
+            default:
+                throw Reject("Choose refund or replacement.", StatusCodes.Status400BadRequest);
+        }
+        var result = await store.ConfirmResolutionAsync(
+            new(OrderId, resolution),
             Request.User.Identity!.Name!, cancellationToken);
         return result switch
         {
-            ResolutionDraft draft => new()
+            ReturnCase confirmedOrder => new()
             {
-                OrderId = OrderId,
+                OrderId = confirmedOrder.OrderId,
+                ResolutionKind = resolutionKind,
                 ProductCode = productCode,
                 DeliveryAddress = deliveryAddress,
-                CustomerReply = customerReply,
-                DraftId = draft.Id,
-                Status = "Draft"
+                RefundAmount = confirmedOrder.PaidAmount,
+                PaymentReference = $"PAY-{confirmedOrder.OrderId}",
+                RefundApprovalAllowed = (await authorization.AuthorizeAsync(Request.User, DemoAuthentication.RefundPolicy)).Succeeded,
+                AvailableProducts = await store.GetInventoryAsync(cancellationToken),
+                Status = "Resolved"
             },
             ResolutionFailure failure => throw Reject(failure)
         };
     }
 
-    public async Task<CaseWorkspaceState> ConfirmResolutionAsync(
-        Guid draftId, string productCode, string deliveryAddress, CancellationToken cancellationToken)
+    private async Task RequireRefundApprovalAsync()
     {
-        await RequireRepresentativeAsync();
-        var draft = await store.GetDraftAsync(draftId, cancellationToken)
-            ?? throw Reject("The resolution draft was not found.", StatusCodes.Status404NotFound);
-        if (draft.OrderId != OrderId
-            || draft.Resolution.Value is not ReplacementResolution replacement
-            || replacement.ProductCode != productCode
-            || replacement.DeliveryAddress != deliveryAddress)
+        if (!(await authorization.AuthorizeAsync(Request.User, DemoAuthentication.RefundPolicy)).Succeeded)
         {
-            throw Reject("The approved details do not match this order's saved replacement draft.");
+            throw Reject("Refund approval is required.", StatusCodes.Status403Forbidden);
         }
-
-        var result = await store.ConfirmAsync(draftId, Request.User.Identity!.Name!, cancellationToken);
-        return result switch
-        {
-            ReturnCase order => new()
-            {
-                OrderId = order.OrderId,
-                ProductCode = productCode,
-                DeliveryAddress = deliveryAddress,
-                DraftId = draftId,
-                Status = "Resolved"
-            },
-            ResolutionFailure failure => throw Reject(failure)
-        };
     }
 
     private async Task RequireRepresentativeAsync()

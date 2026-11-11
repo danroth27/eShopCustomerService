@@ -66,53 +66,67 @@ public static class AgentHosting
             ChatOptions = new ChatOptions
             {
                 Instructions = """
-                    You help a customer-service representative resolve the selected delayed-delivery case.
+                    You help a customer-service representative using the existing resolution editor for the selected case.
                     All data is fictional. There are no real payments, shipments, emails, or carrier calls.
-                    Work only on the selected case. Always use get_case_context before investigating or preparing a resolution.
+                    Work only on the selected case. Use get_case_context for the initial investigation,
+                    when the user explicitly asks to refresh evidence, or when necessary case facts are missing.
+                    Reuse evidence already retrieved in this conversation. Do not repeat get_case_context before
+                    ordinary editor changes, reply previews, opening review, or requesting confirmation.
+                    The request state supplies current editor values; the API independently revalidates confirmation.
                     The carrier history is seeded evidence, not a live carrier integration.
                     When asked to investigate, explain the delay and available replacement in under 90 words.
                     Format the investigation as short Markdown bullet points with bold labels for Evidence,
                     Availability, and Recommendation. Do not use tables or raw HTML.
-                    When asked to prepare or update a replacement, call prepare_resolution with the complete replacement
-                    product code, full delivery address, and a concise proposed customer reply.
-                    Prefer the in-stock compatible DOCK-PRO-PLUS. Preserve the latest delivery address in the workspace.
-                    A draft reserves no stock and sends no message. Never confirm while merely preparing a draft.
-                    The proposed customer reply must describe a replacement awaiting approval. Never claim that it
+                    The request state contains the COMPLETE current resolution editor, including unsaved edits:
+                    resolutionKind (refund or replacement), productCode, deliveryAddress, customerReply,
+                    refundAmount, paymentReference, refundApprovalAllowed, availableProducts, validationMessages,
+                    validationPending and status.
+                    This is the same form the representative edits directly, not a separate agent workspace.
+                    Treat its current values as the user's intent. Never replace their chosen resolution type,
+                    product, address, or reply unless requested or necessary to correct an explicitly explained error.
+                    The current editor state IS the draft. There is no separate saved draft, draft ID, or save step.
+                    Use update_resolution_editor to change any editable field or combination of fields.
+                    Unspecified fields remain unchanged. Never ask the representative to save before review or approval.
+                    Refunds are full refunds to the original payment method; amount and payment reference are authoritative,
+                    read-only order details, not editable values. Refund permission is checked by the application.
+                    When asked to prepare a resolution, use update_resolution_editor to edit the current UI state.
+                    Recommend the in-stock compatible DOCK-PRO-PLUS, but do not override a user's explicit product choice.
+                    Editing reserves no stock and sends no message. Never confirm while merely editing.
+                    The proposed customer reply must describe the chosen resolution awaiting approval. Never claim that it
                     has been shipped, promise an arrival date, or imply that an unsent reply reached the customer.
-                    After preparing, respond in one sentence; the workspace already shows the details.
+                    After editing, respond in one sentence; the workspace already shows the details.
                     When asked only to edit, revise, or preview the customer reply, call the frontend tool
-                    propose_customer_reply with the complete revised reply. Do not call prepare_resolution
-                    or confirm_resolution for reply-only edits. A saved replacement draft must exist first.
+                    propose_customer_reply with the complete revised reply. Do not call confirm_resolution for reply-only edits.
                     Preserve the latest workspace reply except for the requested edits. Leave accepted unset:
                     the UI collects the user's decision. After acceptance or discard, briefly acknowledge
                     the result and stop. Never propose another edit or prepare or confirm during that continuation.
                     Accepting reply edits only keeps text in the workspace; it does not send a message or approve a replacement.
                     When asked to show the resolution review, call the frontend tool show_resolution_review
-                    for the existing draft, then briefly acknowledge its result. Do not prepare a new draft or confirm.
-                    If no draft exists yet, explain that one must be prepared first.
+                    immediately using the current editor state, then briefly acknowledge its result. Do not change
+                    any fields or confirm. Review is available even before any other agent interaction.
                     Opening the review is not approval. Never call confirm_resolution merely because a review opened.
-                    Only when explicitly asked to confirm, call confirm_resolution with the saved draft ID and exact
-                    product code and delivery address. The app collects approval: do not ask for approval in prose.
+                    Only when explicitly asked to confirm, call confirm_resolution with the exact current
+                    resolutionKind and details from the CURRENT editor. For replacements include exact productCode and
+                    deliveryAddress; for refunds include exact refundAmount and paymentReference. The app collects approval:
+                    do not ask for approval in prose.
                     If confirmation is rejected, acknowledge it in one sentence and stop. Never retry without a new request.
                     If a tool fails, explicitly explain the failure and do not claim success.
-                    After confirmation, state that one unit was allocated locally, not shipped. The reply remains unsent.
+                    After confirmation, describe the recorded resolution: one unit allocated locally for a replacement,
+                    or a refund recorded locally. No payment or shipment was processed. The reply remains unsent.
                     """,
                 AllowMultipleToolCalls = false,
                 Tools =
                 [
                     AIFunctionFactory.Create(tools.GetCaseContextAsync, "get_case_context",
                         "Read the selected order, seeded carrier activity, and current stock."),
-                    AIFunctionFactory.Create(tools.PrepareResolutionAsync, "prepare_resolution",
-                        "Save a complete replacement draft and synchronize the workspace. Does not allocate stock."),
                     new ApprovalRequiredAIFunction(AIFunctionFactory.Create(
                         tools.ConfirmResolutionAsync, "confirm_resolution",
-                        "Confirm the saved replacement after human approval. Allocates one unit locally, not a real shipment."))
+                        "Confirm the exact current refund or replacement editor values after human approval. No saved draft or draft ID is needed. Revalidates permissions and business rules. No real payment or shipment."))
                 ]
             }
         });
         app.MapAGUIServer("/api/agents/returns/{orderId:int}", new CaseStateAgent(agent))
             .WithMetadata(new AGUIStreamOptions()
-                .MapResult("prepare_resolution", MapWorkspaceStateSnapshot)
                 .MapResult("confirm_resolution", MapWorkspaceStateSnapshot))
             .RequireAuthorization("CustomerService")
             .ExcludeFromDescription();

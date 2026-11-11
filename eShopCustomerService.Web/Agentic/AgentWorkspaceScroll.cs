@@ -5,7 +5,7 @@ namespace eShopCustomerService.Web.Agentic;
 
 public sealed class AgentWorkspaceScroll(IJSRuntime js) : IAsyncDisposable
 {
-    private const string ModulePath = "./Components/Pages/AgentWorkspace.razor.js";
+    private const string ModulePath = "./Components/Shared/ResolutionAgentPanel.razor.js";
     private const string InitializeMethod = "initialize";
     private const string DisposeMethod = "dispose";
     private IJSObjectReference? _module;

@@ -1,0 +1,195 @@
+@using AGUI.Abstractions
+@using Microsoft.AspNetCore.Components.AI
+@using Microsoft.Extensions.AI
+@using eShopCustomerService.Contracts
+@using eShopCustomerService.Web.Agentic
+@inject AgentConnection Connection
+@inject NavigationManager Navigation
+@inject WorkspaceService Store
+@implements IDisposable
+
+<div class="resolution-workspace @(_agent is null ? "" : "with-agent")">
+    <div class="resolution-editor-column">
+        @if (State.Status != "Resolved")
+        {
+            <ResolutionEditor Order="Order" State="State" StateChanged="UpdateState" DraftSaved="DraftSavedAsync"
+                              ReviewRequested="EditorReview" SavingChanged="SavingChanged" Disabled="Busy" />
+        }
+        <ResolutionReplyEditor State="State" StateChanged="UpdateState" Disabled="@(Busy || _saving)"
+                               PreviewPending="@(_agent?.State.HasPendingPredictiveState == true)" />
+        @if (State.Status == "Resolved")
+        {
+            <section class="panel">
+                <div class="panel-heading"><h2>Resolution recorded</h2><span class="badge">Resolved</span></div>
+                <p>The application recorded this resolution. The customer reply remains unsent.</p>
+            </section>
+        }
+    </div>
+    @if (_agent is not null)
+    {
+        <ResolutionAgentPanel Agent="_agent" Status="_status" StatusChanged="ChangeStatus" Saving="_saving" />
+    }
+</div>
+@if (_reviewState is { } review)
+{
+    <div class="agent-review-backdrop">
+        <section class="panel agent-review">
+            <div class="panel-heading">
+                <div><span class="eyebrow">OPENED BY A FRONTEND TOOL</span><h2>Resolution review</h2></div>
+                <button class="button secondary" @onclick="() => _reviewState = null">Close review</button>
+            </div>
+            <ResolutionSummary Resolution="@(review.ResolutionKind == "refund"
+                ? new Resolution(new RefundResolution(review.RefundAmount, review.PaymentReference))
+                : new Resolution(new ReplacementResolution(review.ProductCode, review.DeliveryAddress)))" />
+            <div class="agent-reply"><span class="eyebrow">CUSTOMER REPLY / NOT SENT</span><p>@review.CustomerReply</p></div>
+            <p class="agent-hint">Reviewing is not approval. No stock or payment has been committed.</p>
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public ReturnCase Order { get; set; } = default!;
+    [Parameter] public EventCallback Resolved { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> Authentication { get; set; } = default!;
+    private UIAgent<CaseWorkspaceState>? _agent;
+    private IChatClient? _chatClient;
+    private IDisposable? _stateSubscription;
+    private CaseWorkspaceState _state = new();
+    private CaseWorkspaceState? _reviewState;
+    private ConversationStatus _status;
+    private bool _saving;
+    private bool _reportedResolution;
+    private CaseWorkspaceState State => _agent?.State.Value ?? _state;
+    private bool Busy => _status is ConversationStatus.Streaming or ConversationStatus.AwaitingInput;
+    private EventCallback EditorReview => _agent is null ? default : EventCallback.Factory.Create(this, ReviewEditorAsync);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await Authentication).User;
+        _state = new()
+        {
+            OrderId = Order.OrderId,
+            DeliveryAddress = Order.DeliveryAddress,
+            RefundAmount = Order.PaidAmount,
+            PaymentReference = $"PAY-{Order.OrderId}",
+            RefundApprovalAllowed = user.IsInRole("RefundApprover"),
+            AvailableProducts = await Store.GetInventoryAsync()
+        };
+        if (!Connection.IsConfigured)
+        {
+            return;
+        }
+        _chatClient = Connection.Create(Order.OrderId, user);
+        var threadId = Guid.NewGuid().ToString("N");
+        _agent = new UIAgent<CaseWorkspaceState>(_chatClient, options =>
+        {
+            options.RegisterUIAction(AIFunctionFactory.Create(
+                (string customerReply, bool? accepted = null) =>
+                    CaseWorkspaceUpdates.ReviewReply(_agent!.State, customerReply, accepted),
+                name: "propose_customer_reply",
+                description: "Preview a complete revised customer reply in the actual reply editor for the user to accept or discard. Preserve their existing text except for requested edits. Leave accepted unset. Does not save, send, or confirm."));
+            options.AddGeneratedToolBlocks();
+            options.ChatOptions = new()
+            {
+                Tools =
+                [
+                    AIFunctionFactory.Create(EditEditorAsync, name: "update_resolution_editor",
+                        description: "Edit the same resolution form the user edits. Optional resolutionKind (refund/replacement), productCode, deliveryAddress, and customerReply replace those fields; omitted fields stay unchanged. The editor state is the draft. Does not confirm, allocate, pay, or send."),
+                    AIFunctionFactory.Create(ShowResolutionReviewAsync, name: "show_resolution_review",
+                        description: "Open a read-only review of the CURRENT resolution editor values, including its unsent reply. The editor state is the draft; no separate saving is needed. Does not require a separate user action or authorize confirmation.")
+                ],
+                RawRepresentationFactory = _ => new RunAgentInput
+                {
+                    ThreadId = threadId,
+                    State = JsonSerializer.SerializeToElement(State, JsonSerializerOptions.Web)
+                }
+            };
+            options.StateMapper = context => CaseWorkspaceUpdates.Map(context, _agent!.State);
+        }, _state);
+        _stateSubscription = _agent.State.OnChanged(RefreshWorkspace);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var allowed = (await Authentication).User.IsInRole("RefundApprover");
+        if (State.RefundApprovalAllowed != allowed)
+        {
+            UpdateState(State with { RefundApprovalAllowed = allowed });
+        }
+    }
+
+    private void UpdateState(CaseWorkspaceState state)
+    {
+        if (_agent is null)
+        {
+            _state = state;
+        }
+        else
+        {
+            _agent.State.Value = state;
+        }
+    }
+
+    private async Task<CaseWorkspaceState> EditEditorAsync(string? resolutionKind = null,
+        string? productCode = null, string? deliveryAddress = null, string? customerReply = null)
+    {
+        CaseWorkspaceState updated = State;
+        await InvokeAsync(() =>
+        {
+            updated = CaseWorkspaceUpdates.Edit(State, resolutionKind, productCode, deliveryAddress, customerReply);
+            UpdateState(updated);
+        });
+        return updated;
+    }
+
+    private Task DraftSavedAsync(ResolutionDraft draft)
+    {
+        Navigation.NavigateTo($"/review/{draft.Id}", forceLoad: true);
+        return Task.CompletedTask;
+    }
+
+    private void SavingChanged(bool saving) => _saving = saving;
+    private async Task ChangeStatus(ConversationStatus status)
+    {
+        _status = status;
+        if (status == ConversationStatus.Idle && State.Status == "Resolved" && !_reportedResolution)
+        {
+            _reportedResolution = true;
+            await Resolved.InvokeAsync();
+        }
+    }
+
+    private async Task<string> ShowResolutionReviewAsync()
+    {
+        await InvokeAsync(() =>
+        {
+            _reviewState = State;
+            StateHasChanged();
+        });
+        return "Resolution review opened in the Blazor UI. No approval was given and the reply remains unsent.";
+    }
+
+    private async Task ReviewEditorAsync()
+    {
+        await ShowResolutionReviewAsync();
+    }
+
+    private async void RefreshWorkspace()
+    {
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception error)
+        {
+            await DispatchExceptionAsync(error);
+        }
+    }
+
+    public void Dispose()
+    {
+        _stateSubscription?.Dispose();
+        _agent?.Dispose();
+        (_chatClient as IDisposable)?.Dispose();
+    }
+}

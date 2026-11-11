@@ -27,6 +27,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Data.Sqlite;
 
 namespace eShopCustomerService.Tests;
 
@@ -59,8 +60,10 @@ public sealed class AgenticTests
         Assert.Contains("<script>", html.Text);
     }
 
-    [Fact]
-    public async Task Configured_agent_workspace_prerenders_its_controls_and_shared_plan()
+    [Theory]
+    [InlineData("/returns/48024")]
+    [InlineData("/agentic/48024")]
+    public async Task Configured_resolution_editor_includes_manual_controls_and_the_agent(string route)
     {
         using var baseline = new DemoFactory();
         using var factory = baseline.WithWebHostBuilder(builder =>
@@ -78,12 +81,20 @@ public sealed class AgenticTests
             AllowAutoRedirect = false
         });
         await DemoFactory.SignInAsync(browser);
-        using var response = await browser.GetAsync("/agentic/48024");
+        using var response = await browser.GetAsync(route);
         response.EnsureSuccessStatusCode();
         var html = await response.Content.ReadAsStringAsync();
-        Assert.Contains("Prepare replacement", html);
+        Assert.DoesNotContain("Save current resolution", html);
+        Assert.DoesNotContain("Saved resolution draft", html);
         Assert.Contains("Show review", html);
         Assert.Contains("Delivery address", html);
+        Assert.Contains("Replacement model", html);
+        Assert.Contains("Refund", html);
+        Assert.Contains("customer-reply", html);
+        Assert.Contains("Resolve this return", html);
+        Assert.Contains("Work the case together", html);
+        Assert.Contains("class=\"agent-chat-controls\" disabled", html);
+        Assert.DoesNotContain("Replacement plan", html);
     }
 
     [Theory]
@@ -139,6 +150,14 @@ public sealed class AgenticTests
             Assert.Contains(approved ? "Committed locally" : "Not committed", completed.Text);
         }
         Assert.Equal(approved ? 1 : 0, allocations);
+        if (!approved)
+        {
+            Assert.Equal(ChatToolMode.None, model.ContinuationToolMode);
+        }
+        else
+        {
+            Assert.NotEqual(ChatToolMode.None, model.ContinuationToolMode);
+        }
     }
 
     [Theory]
@@ -178,13 +197,13 @@ public sealed class AgenticTests
             options.RegisterUIAction(AIFunctionFactory.Create(
                 (string customerReply, bool? accepted = null) => "Reply reviewed",
                 "propose_customer_reply"));
-            options.RegisterUIAction(AIFunctionFactory.Create(() =>
-            {
-                frontendCalls++;
-                return "Review opened";
-            }, "show_resolution_review"));
             options.ChatOptions = new()
             {
+                Tools = [AIFunctionFactory.Create(() =>
+                {
+                    frontendCalls++;
+                    return "Review opened";
+                }, "show_resolution_review")],
                 RawRepresentationFactory = _ => new RunAgentInput { ThreadId = threadId }
             };
         });
@@ -201,16 +220,15 @@ public sealed class AgenticTests
 
         if (reviewFirst)
         {
-            var reviewTurn = context.SendMessageAsync("Show review", timeout.Token);
-            await Task.WhenAny(reviewTurn, awaitingInput.Task).WaitAsync(timeout.Token);
-            Assert.Equal(ConversationStatus.AwaitingInput, context.Status);
-            var action = Assert.Single(context.Turns.Last().ResponseBlocks.OfType<UIActionBlock>());
-            Assert.Equal(0, frontendCalls);
-            Assert.Equal(0, allocations);
-            await action.InvokeAsync(timeout.Token);
-            await action.InvokeAsync(timeout.Token);
-            await reviewTurn;
+            await context.SendMessageAsync("Show review", timeout.Token);
+            Assert.Null(context.Error);
             Assert.Equal(ConversationStatus.Idle, context.Status);
+            Assert.DoesNotContain(context.Turns.Last().ResponseBlocks, block => block is UIActionBlock);
+            Assert.False(awaitingInput.Task.IsCompleted);
+            var review = Assert.Single(context.Turns.Last().ResponseBlocks.OfType<FunctionInvocationContentBlock>());
+            Assert.True(review.HasResult);
+            Assert.Equal("show_resolution_review", review.Call!.Name);
+            Assert.Equal("Review opened", review.Result!.Result?.ToString());
             Assert.Equal(1, frontendCalls);
             Assert.True(model.SawFrontendResult);
             Assert.Equal(0, allocations);
@@ -261,6 +279,187 @@ public sealed class AgenticTests
     }
 
     [Theory]
+    [InlineData("refund", null, null)]
+    [InlineData(null, "DOCK-PRO", null)]
+    [InlineData(null, null, "A new address")]
+    public void Editing_resolution_details_clears_validation_but_preserves_other_editor_values(
+        string? kind, string? product, string? address)
+    {
+        var state = new CaseWorkspaceState
+        {
+            OrderId = 48024,
+            ProductCode = "DOCK-PRO-PLUS",
+            DeliveryAddress = "Original address",
+            CustomerReply = "My manually drafted response",
+            RefundAmount = 149m,
+            PaymentReference = "PAY-48024",
+            ValidationMessages = ["Previous validation"],
+            ValidationPending = true
+        };
+        var edited = CaseWorkspaceUpdates.Edit(state, kind, product, address);
+        Assert.Empty(edited.ValidationMessages);
+        Assert.False(edited.ValidationPending);
+        Assert.Equal("Editing", edited.Status);
+        Assert.Equal(kind ?? state.ResolutionKind, edited.ResolutionKind);
+        Assert.Equal(product ?? state.ProductCode, edited.ProductCode);
+        Assert.Equal(address ?? state.DeliveryAddress, edited.DeliveryAddress);
+        Assert.Equal(state.CustomerReply, edited.CustomerReply);
+        Assert.Equal(state.RefundAmount, edited.RefundAmount);
+        Assert.Equal(state.PaymentReference, edited.PaymentReference);
+    }
+
+    [Fact]
+    public void Reply_edits_preserve_the_editor_values_and_confirmed_resolutions_cannot_be_edited()
+    {
+        var state = new CaseWorkspaceState { CustomerReply = "Old reply" };
+        var edited = CaseWorkspaceUpdates.Edit(state, customerReply: "");
+        Assert.Equal("", edited.CustomerReply);
+        Assert.Equal(state with { CustomerReply = "" }, edited);
+        Assert.Throws<ArgumentException>(() => CaseWorkspaceUpdates.Edit(state, resolutionKind: "unknown"));
+        Assert.Throws<InvalidOperationException>(() =>
+            CaseWorkspaceUpdates.Edit(state with { Status = "Resolved" }, deliveryAddress: "Changed"));
+    }
+
+    [Fact]
+    public async Task Frontend_editor_tool_and_manual_edits_share_the_complete_state_sent_to_the_remote_agent()
+    {
+        using var factory = new DemoFactory();
+        var model = new EditorModel();
+        var agent = new ChatClientAgent(model, new ChatClientAgentOptions
+        {
+            Name = "CustomerService",
+            ChatHistoryProvider = AgentHosting.CreateAguiHistoryProvider()
+        });
+        await using var app = await CreateTransportAppAsync(factory, agent);
+        using var http = app.GetTestClient();
+        var connection = new AgentConnection(new TestClientFactory(http),
+            factory.Services.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>(),
+            app.Configuration, NullLogger<AgentConnection>.Instance);
+        using var chat = connection.Create(48024, CreatePrincipal(app));
+        UIAgent<CaseWorkspaceState> ui = null!;
+        var threadId = Guid.NewGuid().ToString("N");
+        using var agentUi = ui = new UIAgent<CaseWorkspaceState>(chat, options =>
+        {
+            options.ChatOptions = new()
+            {
+                Tools = [AIFunctionFactory.Create(() => "Review", "show_resolution_review"),
+                AIFunctionFactory.Create((string resolutionKind, string productCode,
+                    string deliveryAddress, string customerReply) =>
+                {
+                    ui.State.Value = CaseWorkspaceUpdates.Edit(ui.State.Value,
+                        resolutionKind, productCode, deliveryAddress, customerReply);
+                    return ui.State.Value;
+                }, "update_resolution_editor")],
+                RawRepresentationFactory = _ => new RunAgentInput
+                {
+                    ThreadId = threadId,
+                    State = JsonSerializer.SerializeToElement(ui.State.Value, JsonSerializerOptions.Web)
+                }
+            };
+        }, new()
+        {
+            OrderId = 48024,
+            ResolutionKind = "refund",
+            ProductCode = "DOCK-PRO",
+            DeliveryAddress = "Manual address",
+            CustomerReply = "Manually drafted reply",
+            RefundAmount = 149m,
+            PaymentReference = "PAY-48024",
+            RefundApprovalAllowed = true,
+            AvailableProducts = await factory.Api.Services.GetRequiredService<ReturnStore>().GetInventoryAsync(),
+            Status = "Editing"
+        });
+        using var context = new AgentContext(ui);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await context.SendMessageAsync("Edit all", timeout.Token);
+        Assert.Null(context.Error);
+        Assert.Contains("update_resolution_editor", model.ToolNames);
+        Assert.Contains("show_resolution_review", model.ToolNames);
+        Assert.Equal("replacement", ui.State.Value.ResolutionKind);
+        Assert.Equal("DOCK-PRO-PLUS", ui.State.Value.ProductCode);
+        Assert.Equal("Agent updated address", ui.State.Value.DeliveryAddress);
+        Assert.Equal("Agent updated reply", ui.State.Value.CustomerReply);
+        ui.State.Value = CaseWorkspaceUpdates.Edit(ui.State.Value, customerReply: "My final manual edit");
+        await context.SendMessageAsync("Inspect", timeout.Token);
+        Assert.Null(context.Error);
+        Assert.Contains("\"resolutionKind\":\"refund\"", model.Workspaces[0]);
+        Assert.Contains("\"customerReply\":\"Manually drafted reply\"", model.Workspaces[0]);
+        Assert.Contains("\"refundAmount\":149", model.Workspaces[0]);
+        Assert.Contains("\"paymentReference\":\"PAY-48024\"", model.Workspaces[0]);
+        Assert.Contains("\"refundApprovalAllowed\":true", model.Workspaces[0]);
+        Assert.Contains("\"availableProducts\":[{", model.Workspaces[0]);
+        Assert.Contains("\"resolutionKind\":\"replacement\"", model.Workspaces[^1]);
+        Assert.Contains("\"productCode\":\"DOCK-PRO-PLUS\"", model.Workspaces[^1]);
+        Assert.Contains("\"deliveryAddress\":\"Agent updated address\"", model.Workspaces[^1]);
+        Assert.Contains("\"customerReply\":\"My final manual edit\"", model.Workspaces[^1]);
+    }
+
+    [Fact]
+    public async Task Refund_agent_tools_use_authoritative_amounts_and_recheck_permission_before_confirmation()
+    {
+        using var factory = new DemoFactory();
+        using var browser = factory.Browser();
+        await DemoFactory.SignInAsync(browser);
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
+        var inventory = await store.GetInventoryAsync();
+        var order = (await store.GetCaseAsync(48024))!;
+        var confirmation = new ConfirmResolutionRequest
+        {
+            ResolutionKind = "refund",
+            ProductCode = "",
+            DeliveryAddress = "",
+            RefundAmount = order.PaidAmount,
+            PaymentReference = "PAY-48024"
+        };
+        using var mismatch = await browser.PostAsJsonAsync("/api/agent-tools/returns/48024/confirm",
+            confirmation with { RefundAmount = 1m });
+        Assert.Equal(HttpStatusCode.BadRequest, mismatch.StatusCode);
+        using var revoke = new HttpRequestMessage(HttpMethod.Post, "/demo/auth-refresh/permission")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["refundApproval"] = "false" })
+        };
+        revoke.Headers.Add("Sec-Fetch-Site", "same-origin");
+        using var revoked = await browser.SendAsync(revoke);
+        Assert.Equal(HttpStatusCode.Redirect, revoked.StatusCode);
+        using var forbiddenConfirm = await browser.PostAsJsonAsync("/api/agent-tools/returns/48024/confirm", confirmation);
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenConfirm.StatusCode);
+        await AssertNoSavedDraftsAsync(factory);
+        Assert.Equal(inventory, await store.GetInventoryAsync());
+        Assert.Equal("Open", (await store.GetCaseAsync(48024))!.Status);
+    }
+
+    [Fact]
+    public async Task Approved_refund_is_recorded_once_without_allocating_replacement_stock()
+    {
+        using var factory = new DemoFactory();
+        using var browser = factory.Browser();
+        await DemoFactory.SignInAsync(browser);
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
+        var inventory = await store.GetInventoryAsync();
+        var request = new ConfirmResolutionRequest
+        {
+            ResolutionKind = "refund",
+            ProductCode = "",
+            DeliveryAddress = "",
+            RefundAmount = 149m,
+            PaymentReference = "PAY-48024"
+        };
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var confirmed = await browser.PostAsJsonAsync("/api/agent-tools/returns/48024/confirm", request);
+            confirmed.EnsureSuccessStatusCode();
+            var completed = (await confirmed.Content.ReadFromJsonAsync<CaseWorkspaceState>())!;
+            Assert.Equal("Resolved", completed.Status);
+            Assert.True(completed.RefundApprovalAllowed);
+            Assert.Equal(inventory, completed.AvailableProducts);
+        }
+        Assert.Equal(inventory, await store.GetInventoryAsync());
+        Assert.IsType<RefundResolution>((await store.GetCaseAsync(48024))!.Resolution!.Value.Value);
+        Assert.Single(await store.GetAuditAsync(48024), entry => entry.Action.Contains("refund confirmed"));
+        await AssertNoSavedDraftsAsync(factory);
+    }
+
+    [Theory]
     [InlineData("accept")]
     [InlineData("discard")]
     [InlineData("cancel")]
@@ -269,8 +468,13 @@ public sealed class AgenticTests
     {
         using var factory = new DemoFactory();
         var store = factory.Api.Services.GetRequiredService<ReturnStore>();
-        var initial = await CreateTools(factory).PrepareResolutionAsync(
-            "DOCK-PRO-PLUS", "200 Demo Way", "Original reply awaiting approval.", default);
+        var initial = new CaseWorkspaceState
+        {
+            OrderId = 48024,
+            ProductCode = "DOCK-PRO-PLUS",
+            DeliveryAddress = "200 Demo Way",
+            CustomerReply = "Original reply awaiting approval."
+        };
         var inventory = await store.GetInventoryAsync();
         var audit = await store.GetAuditAsync(48024);
         var model = new ReplyProposalModel();
@@ -341,30 +545,28 @@ public sealed class AgenticTests
         Assert.Equal(inventory, await store.GetInventoryAsync());
         Assert.Equal(audit, await store.GetAuditAsync(48024));
         Assert.Equal("Open", (await store.GetCaseAsync(48024))!.Status);
-        var savedDraft = (await store.GetDraftAsync(initial.DraftId!.Value))!;
-        Assert.Equal(new ReplacementResolution(initial.ProductCode, initial.DeliveryAddress), savedDraft.Resolution.Value);
+        await AssertNoSavedDraftsAsync(factory);
     }
 
     [Fact]
-    public async Task Preparing_then_confirming_uses_the_existing_atomic_idempotent_workflow()
+    public async Task Confirming_current_editor_values_is_atomic_and_idempotent_without_saved_drafts()
     {
         using var factory = new DemoFactory();
         var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var tools = CreateTools(factory);
         var stock = (await store.GetInventoryAsync()).Single(i => i.ProductCode == "DOCK-PRO-PLUS").Available;
-        var draft = await tools.PrepareResolutionAsync("DOCK-PRO-PLUS", "200 Demo Way", "Your replacement is ready for review.", default);
-        Assert.Equal("Draft", draft.Status);
         Assert.Equal("Open", (await store.GetCaseAsync(48024))!.Status);
         Assert.Equal(stock, (await store.GetInventoryAsync()).Single(i => i.ProductCode == "DOCK-PRO-PLUS").Available);
 
-        var confirmed = await tools.ConfirmResolutionAsync(draft.DraftId!.Value, draft.ProductCode, draft.DeliveryAddress, default);
+        var confirmed = await tools.ConfirmResolutionAsync("DOCK-PRO-PLUS", "200 Demo Way", default);
         Assert.Equal("Resolved", confirmed.Status);
-        await tools.ConfirmResolutionAsync(draft.DraftId.Value, draft.ProductCode, draft.DeliveryAddress, default);
+        await tools.ConfirmResolutionAsync("DOCK-PRO-PLUS", "200 Demo Way", default);
         Assert.Equal(stock - 1, (await store.GetInventoryAsync()).Single(i => i.ProductCode == "DOCK-PRO-PLUS").Available);
         var committed = Assert.IsType<ReplacementResolution>((await store.GetCaseAsync(48024))!.Resolution!.Value.Value);
         Assert.Equal("200 Demo Way", committed.DeliveryAddress);
         Assert.Single(await store.GetAuditAsync(48024), a => a.Action.Contains("one unit allocated"));
         Assert.Equal("Test representative", (await store.GetAuditAsync(48024)).First().Actor);
+        await AssertNoSavedDraftsAsync(factory);
     }
 
     [Fact]
@@ -382,21 +584,19 @@ public sealed class AgenticTests
     }
 
     [Fact]
-    public async Task Confirmation_rejects_cross_order_and_changed_approval_details_without_allocating()
+    public async Task Confirmation_is_case_bound_and_cannot_replace_a_previously_confirmed_resolution()
     {
         using var factory = new DemoFactory();
         var store = factory.Api.Services.GetRequiredService<ReturnStore>();
-        var other = await store.SaveDraftAsync(new(48021, new Resolution(new ReplacementResolution("DOCK-PRO-PLUS", "200 Demo Way"))), "Other", default);
-        var otherDraft = Assert.IsType<ResolutionDraft>(other.Value);
         var tools = CreateTools(factory);
-        var before = await store.GetInventoryAsync();
+        await tools.ConfirmResolutionAsync("DOCK-PRO-PLUS", "200 Demo Way", default);
+        var after = await store.GetInventoryAsync();
         await Assert.ThrowsAsync<CaseToolException>(() =>
-            tools.ConfirmResolutionAsync(otherDraft.Id, "DOCK-PRO-PLUS", "200 Demo Way", default));
-        var draft = await tools.PrepareResolutionAsync("DOCK-PRO-PLUS", "200 Demo Way", "Draft", default);
-        await Assert.ThrowsAsync<CaseToolException>(() =>
-            tools.ConfirmResolutionAsync(draft.DraftId!.Value, "DOCK-PRO-PLUS", "Changed address", default));
-        Assert.Equal(before, await store.GetInventoryAsync());
-        Assert.Equal("Open", (await store.GetCaseAsync(48024))!.Status);
+            tools.ConfirmResolutionAsync("DOCK-PRO-PLUS", "Changed address", default));
+        Assert.Equal(after, await store.GetInventoryAsync());
+        Assert.Equal("Open", (await store.GetCaseAsync(48021))!.Status);
+        Assert.Equal("200 Demo Way", Assert.IsType<ReplacementResolution>(
+            (await store.GetCaseAsync(48024))!.Resolution!.Value.Value).DeliveryAddress);
     }
 
     [Fact]
@@ -406,7 +606,7 @@ public sealed class AgenticTests
         var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var audit = await store.GetAuditAsync(48024);
         await Assert.ThrowsAsync<CaseToolException>(() =>
-            CreateTools(factory).PrepareResolutionAsync("DOCK-PRO", "200 Demo Way", "Draft", default));
+            CreateTools(factory).ConfirmResolutionAsync("DOCK-PRO", "200 Demo Way", default));
         Assert.Equal(audit, await store.GetAuditAsync(48024));
         await Assert.ThrowsAsync<CaseToolException>(() =>
             CreateTools(factory, authenticated: false).GetCaseContextAsync(default));
@@ -426,10 +626,24 @@ public sealed class AgenticTests
             factory.Api.Services.GetRequiredService<IAuthorizationService>(), NullLogger<CaseTools>.Instance);
     }
 
+    private static async Task AssertNoSavedDraftsAsync(DemoFactory factory)
+    {
+        await using var db = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = factory.DatabasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false
+        }.ToString());
+        await db.OpenAsync();
+        await using var command = db.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM Drafts";
+        Assert.Equal(0L, await command.ExecuteScalarAsync());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Separate_agent_calls_application_apis_and_only_commits_an_approved_draft(bool approved)
+    public async Task Separate_agent_calls_application_apis_and_only_commits_approved_editor_values(bool approved)
     {
         using var factory = new DemoFactory();
         await using var app = await CreateTransportAppAsync(factory, model: new ApplicationToolsModel());
@@ -441,7 +655,13 @@ public sealed class AgenticTests
         var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         factory.Server.Dispose();
         var inventory = await store.GetInventoryAsync();
-        var state = new CaseWorkspaceState { OrderId = 48024 };
+        var audit = await store.GetAuditAsync(48024);
+        var state = new CaseWorkspaceState
+        {
+            OrderId = 48024,
+            DeliveryAddress = ApplicationToolsModel.Address,
+            CustomerReply = "Reply awaiting approval."
+        };
         var threadId = Guid.NewGuid().ToString("N");
         var options = new ChatOptions
         {
@@ -459,26 +679,6 @@ public sealed class AgenticTests
         Assert.Equal(48024, block.CaseInfo!.Order.OrderId);
         Assert.Equal(12, block.CaseInfo.Inventory.Single(i => i.ProductCode == "DOCK-PRO-PLUS").Available);
         messages.AddRange(evidence.Messages);
-        messages.Add(new(ChatRole.User, "Prepare"));
-        var prepared = await ReadTurnAsync().ToChatResponseAsync();
-        messages.AddRange(prepared.Messages);
-        Assert.Equal("Draft", state.Status);
-        Assert.Equal(ApplicationToolsModel.Address, state.DeliveryAddress);
-        Assert.Equal("Reply awaiting approval.", state.CustomerReply);
-        Assert.NotNull(await store.GetDraftAsync(state.DraftId!.Value));
-        Assert.Equal(inventory, await store.GetInventoryAsync());
-
-        using var web = factory.Api.Server.CreateClient();
-        web.BaseAddress = new("https://localhost");
-        web.DefaultRequestHeaders.Add("Cookie", http.DefaultRequestHeaders.GetValues("Cookie"));
-        using var mismatch = await web.PostAsJsonAsync("/api/agent-tools/returns/48024/confirm",
-            new ConfirmResolutionRequest
-            {
-                DraftId = state.DraftId.Value,
-                ProductCode = state.ProductCode,
-                DeliveryAddress = "A different address"
-            });
-        Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
         Assert.Equal(inventory, await store.GetInventoryAsync());
 
         messages.Add(new(ChatRole.User, "Confirm"));
@@ -488,13 +688,21 @@ public sealed class AgenticTests
         messages.AddRange(pending.Messages);
         messages.Add(new(ChatRole.User, [approval.CreateResponse(approved)]));
         await ReadTurnAsync().ToChatResponseAsync();
-        Assert.Equal(approved ? "Resolved" : "Draft", state.Status);
+        Assert.Equal(approved ? "Resolved" : "Editing", state.Status);
         Assert.Equal(approved ? "Resolved" : "Open", (await store.GetCaseAsync(48024))!.Status);
         Assert.Equal(approved ? 11 : 12,
             (await store.GetInventoryAsync()).Single(i => i.ProductCode == "DOCK-PRO-PLUS").Available);
         Assert.Equal(approved ? 1 : 0,
             (await store.GetAuditAsync(48024)).Count(a => a.Action.Contains("one unit allocated")));
-        Assert.Equal("Taylor Brooks", (await store.GetAuditAsync(48024)).First().Actor);
+        if (approved)
+        {
+            Assert.Equal("Taylor Brooks", (await store.GetAuditAsync(48024)).First().Actor);
+        }
+        else
+        {
+            Assert.Equal(audit, await store.GetAuditAsync(48024));
+        }
+        await AssertNoSavedDraftsAsync(factory);
 
         async IAsyncEnumerable<ChatResponseUpdate> ReadTurnAsync()
         {
@@ -626,6 +834,54 @@ public sealed class AgenticTests
         return app;
     }
 
+    private sealed class EditorModel : IChatClient
+    {
+        public List<string> Workspaces { get; } = [];
+        public HashSet<string> ToolNames { get; } = [];
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            GetStreamingResponseAsync(messages, options, cancellationToken).ToChatResponseAsync(cancellationToken);
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            var history = messages.ToList();
+            var workspace = history.LastOrDefault(m => m.Text.StartsWith("The current workspace draft is JSON data"));
+            if (workspace is not null)
+            {
+                Workspaces.Add(workspace.Text);
+            }
+            foreach (var tool in options?.Tools ?? [])
+            {
+                ToolNames.Add(tool.Name);
+            }
+            if (history.Any(m => m.Role == ChatRole.User && m.Text == "Inspect")
+                || history.SelectMany(m => m.Contents).OfType<FunctionResultContent>().Any(r => r.CallId == "editor-1"))
+            {
+                yield return new(ChatRole.Assistant, "Editor state received.");
+            }
+            else
+            {
+                yield return new()
+                {
+                    Role = ChatRole.Assistant,
+                    Contents = [new FunctionCallContent("editor-1", "update_resolution_editor",
+                        new Dictionary<string, object?>
+                        {
+                            ["resolutionKind"] = "replacement", ["productCode"] = "DOCK-PRO-PLUS",
+                            ["deliveryAddress"] = "Agent updated address", ["customerReply"] = "Agent updated reply"
+                        })]
+                };
+            }
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
     private sealed class ApplicationToolsModel : IChatClient
     {
         public const string Address = "200 Demo Way, Seattle, WA 98101";
@@ -642,11 +898,10 @@ public sealed class AgenticTests
             await Task.Yield();
             Calls++;
             var history = messages.ToList();
-            var prompt = history.Last(m => m.Role == ChatRole.User && m.Text is "Investigate" or "Prepare" or "Confirm").Text;
+            var prompt = history.Last(m => m.Role == ChatRole.User && m.Text is "Investigate" or "Confirm").Text;
             var (name, id) = prompt switch
             {
                 "Investigate" => ("get_case_context", "evidence-1"),
-                "Prepare" => ("prepare_resolution", "prepare-1"),
                 "Confirm" => ("confirm_resolution", "confirm-1"),
                 _ => throw new InvalidOperationException("Unexpected test prompt.")
             };
@@ -660,18 +915,6 @@ public sealed class AgenticTests
             {
                 arguments["productCode"] = "DOCK-PRO-PLUS";
                 arguments["deliveryAddress"] = Address;
-                if (name == "prepare_resolution")
-                {
-                    arguments["customerReply"] = "Reply awaiting approval.";
-                }
-                else
-                {
-                    var draft = history.SelectMany(m => m.Contents).OfType<FunctionResultContent>()
-                        .LastOrDefault(result => result.CallId == "prepare-1");
-                    arguments["draftId"] = draft is null ? Guid.NewGuid()
-                        : JsonSerializer.Deserialize<JsonElement>(
-                            Assert.IsType<string>(draft.Result)).GetProperty("draftId").GetGuid();
-                }
             }
             yield return new()
             {
@@ -779,6 +1022,8 @@ public sealed class AgenticTests
 
     private sealed class ApprovalModel(bool failAfterConfirmation) : IChatClient
     {
+        public ChatToolMode? ContinuationToolMode { get; private set; }
+
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages,
             ChatOptions? options = null, CancellationToken cancellationToken = default) =>
             GetStreamingResponseAsync(messages, options, cancellationToken).ToChatResponseAsync(cancellationToken);
@@ -789,6 +1034,10 @@ public sealed class AgenticTests
         {
             await Task.Yield();
             var result = messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>().LastOrDefault();
+            if (result is not null)
+            {
+                ContinuationToolMode = options?.ToolMode;
+            }
             if (result is not null && failAfterConfirmation)
             {
                 throw new InvalidOperationException("Test inference failed after the tool completed.");
