@@ -7,6 +7,7 @@ namespace eShopCustomerService.Web.Domain;
 public sealed class CustomerReturnRequest
 {
     [Range(1, int.MaxValue)]
+    [Display(Name = "Order")]
     public int OrderId { get; set; } = 48021;
 
     [Required, StringLength(100)]

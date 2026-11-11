@@ -7,7 +7,7 @@
 <div class="request-grid">
     <section class="panel">
         <ProductArtwork />
-        <h2>USB-C Dock Pro</h2><p>Alex Morgan <span class="separator">/</span> Order #48021</p>
+        <h2>USB-C Dock Pro</h2><p>Alex Morgan <span class="separator">/</span> <DisplayName For="@(() => Input!.OrderId)" /> #@(Input!.OrderId)</p>
         <p>This form is for the fictional sample purchase only. Please use demonstration contact details.</p>
         <a href="/care/policy">Review your return options &rarr;</a>
     </section>
@@ -16,9 +16,9 @@
             <DataAnnotationsValidator />
             <ValidationSummary />
             <input type="hidden" name="Input.OrderId" value="48021" />
-            <div class="field"><label for="care-name"><DisplayName For="@(() => Input!.Name)" /></label><InputText id="care-name" @bind-Value="Input!.Name" autocomplete="name" /><ValidationMessage For="@(() => Input!.Name)" /></div>
-            <div class="field"><label for="care-email"><DisplayName For="@(() => Input!.Email)" /></label><InputText id="care-email" type="email" @bind-Value="Input!.Email" autocomplete="email" /><ValidationMessage For="@(() => Input!.Email)" /></div>
-            <div class="field"><label for="care-message"><DisplayName For="@(() => Input!.Message)" /></label><InputTextArea id="care-message" @bind-Value="Input!.Message" rows="5" /><ValidationMessage For="@(() => Input!.Message)" /></div>
+            <div class="field"><Label For="@(() => Input!.Name)" /><InputText @bind-Value="Input!.Name" autocomplete="name" /><ValidationMessage For="@(() => Input!.Name)" /></div>
+            <div class="field"><Label For="@(() => Input!.Email)" /><InputText type="email" @bind-Value="Input!.Email" autocomplete="email" /><ValidationMessage For="@(() => Input!.Email)" /></div>
+            <div class="field"><Label For="@(() => Input!.Message)" /><InputTextArea @bind-Value="Input!.Message" rows="5" /><ValidationMessage For="@(() => Input!.Message)" /></div>
             @if (failureMessage is not null)
             {
                 <p class="notice" role="alert">@failureMessage</p>

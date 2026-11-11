@@ -48,12 +48,12 @@ For presentation, start both resources, reset the demo data, and warm the intera
 
 Authentication refresh is part of every workspace session. There is no separate Start/End mode. The app keeps its normal long-lived authentication cookie and sets `MaximumAuthenticationExpiration` to 20 seconds on the Blazor connection. The built-in client normally reauthenticates about every 10 seconds. This short connection-authentication window makes the feature visible during a presentation; it is not the cookie lifetime or a production revocation recommendation.
 
-1. Enter the workspace and open an unresolved return: normally 48021, or 48022 after the CSRF walkthrough resolves 48021. Open browser Network tools before loading the editor and retain the log.
+1. Enter the workspace and open an unresolved return: normally 48021, or 48022 after the CSRF walkthrough resolves 48021. Open browser Network tools before loading the editor and retain the log. Use **Open permission controls**, then move the controls tab to a second window beside the editor. Keep the editor visible throughout this demo so the eight-second Auto Pause policy doesn't replace its circuit.
 2. Select the available **USB-C Dock Pro+** and change the delivery address to `200 Demo Way`. Leave this replacement unsaved. Note the **Editor instance** value above the form.
-3. Use **Open permission controls** to open a second tab. Select **Remove refund approval**. This issues an updated cookie in the same browser. Return to the original editor without reloading; the next scheduled refresh normally changes **Refund approval: allowed** to **removed** within about 10 seconds. The editor instance, selected product, and unsaved address remain unchanged.
+3. In the permission-controls window, select **Remove refund approval**. This issues an updated cookie in the same browser. Watch the original editor without reloading; the next scheduled refresh normally changes **Refund approval: allowed** to **removed** within about 10 seconds. The editor instance, selected product, and unsaved address remain unchanged.
 4. Select **Refund**. The review action is replaced by a permission warning. This is not just hidden UI: the interactive save handler, draft API, and HTTP confirmation endpoint each independently enforce the refund policy. Replacement preparation remains available.
-5. In the controls tab, select **Restore refund approval**. Return to the original editor and wait for the badge and **Review refund** action to return. Switch back to **Replacement** to show the unsaved address and product are still present. No draft or resolution has been committed.
-6. Leave refund approval restored and close the controls tab before continuing other demos. No session restart or extra sign-in is needed.
+5. In the controls window, select **Restore refund approval**. Wait for the original editor's badge and **Review refund** action to return. Switch back to **Replacement** to show the unsaved address and product are still present. No draft or resolution has been committed.
+6. Leave refund approval restored and close the controls window before continuing other demos. No session restart or extra sign-in is needed.
 
 For a technical close-up, filter Network for `_blazor`: the existing WebSocket remains open while automatic `POST /_blazor/refresh` requests return HTTP 200 with the browser's current cookie. No new WebSocket is created. The visible editor instance is a component-instance marker, not a SignalR connection ID; use the actual Network trace to substantiate the unchanged connection.
 
@@ -100,7 +100,7 @@ Show `Components\Pages\ServiceQueue.razor`: `Items`, `AnchorMode`, and `ScrollTo
 | Database-backed availability check | `eShopCustomerService.Web\Services\InventoryService.cs` |
 | Blazor validation, pending state, and typed union construction | `eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor` |
 | Typed union rendering | `eShopCustomerService.Web\Components\Shared\ResolutionSummary.razor` |
-| Minimal APIs, `AddValidation`, and protected form confirmation | `eShopCustomerService.Web\Program.cs` |
+| Minimal APIs, `AddValidation`, protected form confirmation, and app-wide Auto Pause | `eShopCustomerService.Web\Program.cs` |
 | Atomic confirmation and audit history | `eShopCustomerService.Web\Data\ReturnStore.cs` |
 | Independent-origin browser form | `eShopCustomerService.CrossOrigin\Program.cs` |
 | Opt-in demo cookies and per-session permission revalidation | `eShopCustomerService.Web\Services\DemoAuthentication.cs` |
@@ -109,7 +109,7 @@ Show `Components\Pages\ServiceQueue.razor`: `Items`, `AnchorMode`, and `ScrollTo
 | Variable-height queue, anchor policies, and jump-to-row | `eShopCustomerService.Web\Components\Pages\ServiceQueue.razor` |
 | Static customer care, validation, TempData, and HTTP session | `eShopCustomerService.Web\Components\Pages\Care` |
 | Public cached QuickGrid region | `eShopCustomerService.Web\Components\Shared\CustomerHelpLibrary.razor` |
-| Persistent customer context and opt-in inactivity pause | `eShopCustomerService.Web\Components\Pages\ReturnDetails.razor` |
+| Persistent customer context and conditional loading | `eShopCustomerService.Web\Components\Pages\ReturnDetails.razor` |
 | Selected unsaved resolution state | `eShopCustomerService.Web\Domain\ResolutionEditorState.cs` |
 | Circuit metrics, server-requested pause, and bounded shutdown | `eShopCustomerService.Web\Services\CircuitMonitor.cs` |
 
@@ -119,16 +119,19 @@ Inventory lookup includes a configurable 650 ms presentation delay (`Demo:Valida
 
 The customer journey and representative workflow are part of the same `customerservice` resource in the existing AppHost. No additional demo web application is needed.
 
-1. Enter the representative workspace and reset demo data. Open `/care` in a separate anonymous browser context, such as InPrivate; leave interactive return tabs closed for the initial no-circuit demonstration. Keep the customer anonymous for the whole-response cache example, because the default output-cache policy bypasses authenticated responses.
+1. Enter the representative workspace and reset demo data. Close interactive return tabs, select **Sign out**, and open `/care` in the same browser window. Stay signed out throughout the customer-care walkthrough, because the default output-cache policy bypasses authenticated responses. A separate browser profile or InPrivate window isn't needed.
 2. Explore `/care/help`. Enhanced navigation preserves the document; QuickGrid sorting and pagination use query-string links without a circuit. The public help region is cached for two minutes, while the outer request timestamp changes. `/care/policy` uses a one-minute public output-cache policy.
 3. On `/care/request`, submit Alex Morgan's request for the featured fictional order 48021. Client-side validation rejects invalid input without a POST; the server independently validates accepted submissions. The request is stored in SQLite and updates the very same return's reason, contact details, and audit history.
 4. On `/care/received`, refresh once: the TempData thank-you message disappears, while HTTP session retains the receipt reference. The session cache is process-local; the durable request itself remains in SQLite.
-5. Compare `/rendering-baseline/48021` with `/returns/48021?continuity=true`. The baseline deliberately repeats its context load during prerendering and activation. The normal return view uses `[PersistentState]` to reuse its loaded context.
-6. Select USB-C Dock Pro+, enter `200 Demo Way`, and select **Preview without saving**. This preview and its selected values are component recovery state. Unlike **Review replacement**, preview does not save a database draft.
-7. Pause/resume manually with `await Blazor.pauseCircuit()` and `await Blazor.resumeCircuit()` in the browser console. Then hide the preview tab for about ten seconds while observing `/operations`. The opt-in eight-second inactivity policy releases the live circuit; returning restores a new editor instance with the same selected data.
-8. With the preview active, immediately switch to `/operations` and select **Stop this service gracefully**. Confirm the stop before the inactivity timer fires. Restart **customerservice** in the Aspire dashboard, or run `aspire resource customerservice restart`. Resume the original workspace tab without refreshing it; the process and editor instance change, but the unsaved preview survives.
+5. In the same tab, select **Sign in**, then **Enter demo workspace**, and open the existing case page, `/returns/48021`. Briefly point out Alex's submitted reason and email. Show `[PersistentState]` on `Context` and the conditional load in `ReturnDetails.razor`. Place Aspire's resource logs beside the visible workspace, clear the displayed logs, filter to `Resolution context load`, and fully reload the same URL. Wait for the editor to become interactive: one context load serves prerendering and activation. Without persistence, the separate component instances would each load the context. Explain that baseline; no live code edit, rebuild, or restart is needed.
+6. Demonstrate resilience on the same `/returns/48021` page. Select **Replacement**, choose USB-C Dock Pro+, enter `200 Demo Way`, and move focus out of the address field so the edits reach the server. Don't select **Review replacement**. Keep the workspace visible and watch Aspire's built-in connected/active circuit metrics in a side-by-side window, so the hidden-tab Auto Pause timer does not run. In the workspace tab's DevTools Network throttling dropdown, select **Offline**. Observe disconnected, then evicted. Once active circuits reaches zero, restore **No throttling** on the workspace tab. Allow recovery, or select **Retry** if automatic retries have ended. The unsaved selection and address remain without refreshing or restarting the process.
+7. For proactive resource management, stay on `/returns/48021`. Select USB-C Dock Pro+, enter `200 Demo Way`, click the editor heading to leave the address field, and wait for validation. Show `[PersistentState]` on the editor's `Draft`. Leave the unsaved form open; don't select **Review replacement**, which saves a database draft.
+8. Switch to Aspire Metrics in another tab of the same window, hiding the editor. The app-wide eight-second hidden-tab policy releases the live circuit; allow for telemetry refresh. Returning restores the editable model and address automatically. No manual pause/resume commands are needed.
+9. With the editor visible and connected again, immediately switch to `/operations`, select the confirmation checkbox, and select **Stop this service gracefully** before the eight-second Auto Pause timer fires. Restart **customerservice** in the Aspire dashboard, or run `aspire resource customerservice restart`. Refresh Operations to show the new process ID, then resume the original workspace tab without refreshing it; the process changes, but the unsaved editable values survive.
 
-Only the `continuity=true` view enables the short inactivity timer, so the separate authentication-refresh and virtualization demos retain their existing behavior. Operations uses HTTP polling and requires representative authorization; it does not open a circuit. Close other live tabs before the process-replacement walkthrough, because shutdown requests pause for all connected circuits in this process.
+For presentation pacing, `Program.cs` sets disconnected-circuit retention to ten seconds instead of the framework's default three minutes. Network-loss detection takes additional time: wait for Aspire's active-circuit metric to reach zero rather than timing from the Offline selection. A short interruption reconnects to the retained circuit. Before eviction after a longer interruption, Blazor persists selected application state on the server and can restore it into a new circuit. This capability is available in .NET 10. The default recovery cache is process-local; this does not protect against a server crash or capture edits that haven't reached the server. The later cooperative pause demos use a protected browser-held snapshot instead.
+
+`Program.cs` enables Auto Pause app-wide with `WithBrowserOptions(options => options.AddAutoPause(...))`; no query parameter is needed. The hidden-tab delay is shortened from the two-minute default to eight seconds for demonstration pacing. Keep the workspace visible while checking logs, permissions, or metrics in the other demonstrations; a side-by-side window prevents an unintended hidden-tab pause. This can also affect the authentication-refresh and virtualization demonstrations: transient UI state may reset when their interactive workspace pauses. Operations is a static Blazor page with a confirmed, server-handled shutdown form and requires representative authorization; it does not open a circuit or poll metrics. Its process ID is rendered on each page request. Before demonstrating circuit counts, start with a fresh workspace and verify one connected and one active circuit in Aspire; don't count retained circuits from earlier navigations as part of the demonstration. Close other live tabs before the process-replacement walkthrough, because shutdown requests pause for all connected circuits in this process.
 
 The shutdown callback waits for cooperative pause with a bounded budget before the web server tears down connections. This is a local application-side demonstration, not a production traffic-draining deployment orchestrator. A crash, expired/incompatible recovery state, or full refresh can lose unsaved browser-held work. Durable saving, shared Data Protection, and multi-instance storage design are separate concerns.
 
@@ -142,19 +145,7 @@ dotnet format eShopCustomerService.sln --verify-no-changes
 
 Stop Aspire before building or formatting to release its resource assemblies. Integration tests use isolated temporary databases and cover union contracts, live OpenAPI generation, asynchronous API validation, authentication, rejected cross-origin forms, idempotent confirmation, stock races, rollback, persistence, reset, and permission enforcement with stale demo cookies.
 
-For single-user browser checks, start an isolated AppHost first, then:
-
-```powershell
-Set-Location server-rendering-tools
-npm ci
-$env:DEMO_URL = '<HTTPS customerservice URL shown by Aspire>'
-npm run verify
-npm run verify:auto-pause
-```
-
-The browser check resets fictional demo data and exercises customer handoff, caching, forms, component persistence, pause/resume, authentication refresh, and real cross-origin rejection. The native Edge check verifies actual tab visibility, rather than synthesizing a visibility event. Both create and close only their own browsers. Run sequentially without other live circuits.
-
-To include actual service replacement in `npm run verify`, set `VERIFY_RESTART=1` and `DEMO_APPHOST` to the full path of the owned isolated AppHost project. That check deliberately stops and restarts only `customerservice`; it does not stop the AppHost or the independent test resource. Azure/load experiments are separate and remain deferred.
+For browser verification, rehearse the walkthrough above with no other live demo circuits. Check the customer handoff, one-load prerendering, disconnected-circuit recovery, hidden-tab pause/resume, and graceful service replacement. Restore **No throttling** after the interruption demo. Reset the fictional demo data and use a fresh browser window before presenting. Azure/load experiments remain deferred.
 
 ## Deliberate boundaries
 

@@ -1,21 +1,54 @@
 @page "/operations"
 @attribute [Authorize(Policy = "CustomerService")]
+@inject IHostApplicationLifetime Lifetime
 
-<PageTitle>Session operations | eShop</PageTitle>
-<div class="page-heading"><div><span class="eyebrow">SESSION OPERATIONS</span><h1>Keep the work. Release the resources.</h1><p>This HTTP-only view observes the same customer-service process without opening its own circuit.</p></div></div>
-<section class="panel" data-operations>
-    <div class="operations-metrics">
-        <div><span>Connected circuits</span><strong data-metric="connected">...</strong></div>
-        <div><span>Live circuits</span><strong data-metric="live">...</strong></div>
-        <div><span>Context loads</span><strong data-metric="contextLoads">...</strong></div>
-        <div><span>Process ID</span><strong data-metric="processId">...</strong></div>
-    </div>
-    <p class="muted">Single-process diagnostics, not a capacity benchmark. Disconnected circuits may remain retained briefly; watch the live count fall after pause completes.</p>
-    <div class="operations-actions">
-        <button class="button" type="button" data-presenter-action="drain">Request circuit pause</button>
-        <button class="button secondary" type="button" data-presenter-action="shutdown">Stop this service gracefully</button>
-    </div>
-    <p class="notice subtle" data-operation-status role="status">Connecting to session metrics...</p>
+<PageTitle>Service operations | eShop</PageTitle>
+<div class="page-heading"><div><span class="eyebrow">SERVICE OPERATIONS</span><h1>Deploy gracefully. Keep the work.</h1><p>This static Blazor page stops the service without opening its own circuit. Use Aspire for metrics and logs.</p></div></div>
+<section class="panel">
+    <p>Process ID: <strong>@Environment.ProcessId</strong></p>
+    @if (stopping)
+    {
+        <p class="notice" role="status">Stopping this service. Restart customerservice in Aspire.</p>
+    }
+    else
+    {
+        <form class="shutdown-form" method="post" @onsubmit="StopService" @formname="stop-service" data-enhance="true">
+            <AntiforgeryToken />
+            <label><input type="checkbox" name="ConfirmShutdown" value="true" checked="@ConfirmShutdown" required /> I understand this will pause connected workspaces and stop this service.</label>
+            <button class="button secondary" type="submit">Stop this service gracefully</button>
+        </form>
+        @if (failure is not null)
+        {
+            <p class="notice error" role="alert">@failure</p>
+        }
+    }
     <p>After stopping, restart <strong>customerservice</strong> in the Aspire dashboard, then resume the original workspace tab. Keep that tab open: a full refresh discards browser-held recovery state.</p>
-    <a href="/returns/48021?continuity=true">Open Alex's resolution workspace</a>
+    <a href="/returns/48021">Open Alex's resolution workspace</a>
 </section>
+
+@code {
+    [CascadingParameter]
+    public HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm(FormName = "stop-service")]
+    private bool ConfirmShutdown { get; set; }
+
+    private bool stopping;
+    private string? failure;
+
+    private void StopService()
+    {
+        if (!ConfirmShutdown)
+        {
+            failure = "Confirm that you want to stop this service.";
+            return;
+        }
+
+        stopping = true;
+        HttpContext.Response.OnCompleted(() =>
+        {
+            Lifetime.StopApplication();
+            return Task.CompletedTask;
+        });
+    }
+}

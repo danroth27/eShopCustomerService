@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.DataProtection;
 
@@ -20,7 +21,11 @@ if (!builder.Environment.IsDevelopment())
 }
 
 builder.AddServiceDefaults();
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
+{
+    // Shorten the default three-minute retention to make disconnected recovery visible in the demo.
+    options.DisconnectedCircuitRetentionPeriod = TimeSpan.FromSeconds(10);
+});
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddSingleton<DemoAuthentication>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
@@ -72,10 +77,6 @@ builder.Services.AddSession(options =>
 builder.Services.AddOutputCache(options => options.AddPolicy("PublicHelp",
     policy => policy.Expire(TimeSpan.FromMinutes(1))));
 builder.Services.AddDataProtection().SetApplicationName("eShopCustomerService.Web");
-if (builder.Configuration["DataProtection:KeyDirectory"] is { Length: > 0 } keyDirectory)
-{
-    builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(keyDirectory));
-}
 builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(30));
 
 var app = builder.Build();
@@ -193,33 +194,16 @@ api.MapPost("/replacements/validate", (ReplacementRequest request) =>
     TypedResults.Ok(new { valid = true, message = "Replacement request passed asynchronous inventory validation." }));
 
 app.MapOpenApi();
-var presenter = app.MapGroup("/presenter").RequireAuthorization("CustomerService").ExcludeFromDescription();
-presenter.MapGet("/metrics", (CircuitMonitor monitor, ResolutionContextLoader loader) => monitor.Snapshot(loader.Loads));
-presenter.MapPost("/drain", (PresenterAction request, CircuitMonitor monitor, CancellationToken ct) =>
-    request.Confirmation == "PAUSE"
-        ? DrainAsync(monitor, ct)
-        : Task.FromResult<IResult>(Results.BadRequest("Pause requires the explicit PAUSE confirmation.")));
-presenter.MapPost("/shutdown", (PresenterAction request, IHostApplicationLifetime lifetime) =>
-{
-    if (request.Confirmation != "STOP")
-    {
-        return Results.BadRequest("Stopping requires the explicit STOP confirmation.");
-    }
-    lifetime.StopApplication();
-    return Results.Accepted();
-});
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode(options =>
     options.ConfigureConnection = connection =>
     {
         connection.CloseOnAuthenticationExpiration = true;
         connection.MaximumAuthenticationExpiration = TimeSpan.FromSeconds(20);
-    });
+    })
+    .WithBrowserOptions(options =>
+        options.AddAutoPause(pause => pause.HiddenDelay = TimeSpan.FromSeconds(8)));
 
 await app.Services.GetRequiredService<ReturnStore>().InitializeAsync();
 app.Run();
 
-static async Task<IResult> DrainAsync(CircuitMonitor monitor, CancellationToken ct) =>
-    Results.Ok(await monitor.DrainAsync(ct));
-
-public sealed record PresenterAction(string Confirmation);
 public partial class Program;
