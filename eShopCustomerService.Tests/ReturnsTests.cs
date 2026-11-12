@@ -64,6 +64,8 @@ public sealed class ReturnsTests
         Assert.DoesNotContain("\"type\":\"server\"", await page.Content.ReadAsStringAsync());
         var lifetime = factory.Services.GetRequiredService<IHostApplicationLifetime>();
         Assert.False(lifetime.ApplicationStopping.IsCancellationRequested);
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = lifetime.ApplicationStopping.Register(() => stopping.TrySetResult());
         using var request = new HttpRequestMessage(HttpMethod.Post, "/operations")
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -75,9 +77,14 @@ public sealed class ReturnsTests
         request.Headers.Add("Sec-Fetch-Site", "same-origin");
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(confirmed, lifetime.ApplicationStopping.IsCancellationRequested);
         Assert.Contains(confirmed ? "Stopping this service." : "Confirm that you want to stop this service.",
             await response.Content.ReadAsStringAsync());
+        if (confirmed)
+        {
+            // Response.OnCompleted can request shutdown after the client receives the response body.
+            await stopping.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Assert.Equal(confirmed, lifetime.ApplicationStopping.IsCancellationRequested);
     }
 
     [Fact]

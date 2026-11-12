@@ -7,7 +7,6 @@ public sealed class ResolutionContextLoader(
     ReturnStore store, IConfiguration configuration, ILogger<ResolutionContextLoader> logger)
 {
     private int loads;
-    public int Loads => Volatile.Read(ref loads);
 
     public async Task<ResolutionContext?> LoadAsync(int orderId, CancellationToken ct = default)
     {

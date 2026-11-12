@@ -123,7 +123,9 @@ public sealed class AuthRefreshTests
             using (var replacement = new DemoFactory(database, deleteOnDispose: false))
             using (var client = replacement.CreateClient(new()
             {
-                BaseAddress = new("https://localhost"), AllowAutoRedirect = false, HandleCookies = false
+                BaseAddress = new("https://localhost"),
+                AllowAutoRedirect = false,
+                HandleCookies = false
             }))
             {
                 client.DefaultRequestHeaders.Add("Cookie", $"{cookie.Name}={cookie.Value}");
@@ -138,7 +140,9 @@ public sealed class AuthRefreshTests
             using var restartedAgain = new DemoFactory(database);
             using var stale = restartedAgain.CreateClient(new()
             {
-                BaseAddress = new("https://localhost"), AllowAutoRedirect = false, HandleCookies = false
+                BaseAddress = new("https://localhost"),
+                AllowAutoRedirect = false,
+                HandleCookies = false
             });
             stale.DefaultRequestHeaders.Add("Cookie", $"{cookie.Name}={cookie.Value}");
             using var rejected = await stale.GetAsync("/api/returns");

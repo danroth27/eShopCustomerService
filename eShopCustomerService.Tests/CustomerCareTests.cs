@@ -63,7 +63,10 @@ public sealed class CustomerCareTests
         var audit = await store.GetAuditAsync(48021);
         var result = await store.SubmitCustomerRequestAsync(new()
         {
-            Name = name, Email = email, Message = message, OrderId = orderId
+            Name = name,
+            Email = email,
+            Message = message,
+            OrderId = orderId
         });
         Assert.Equal(expected, Assert.IsType<ResolutionFailure>(result.Value).Kind);
         Assert.Equal(cases, await store.GetCasesAsync());
@@ -165,7 +168,8 @@ public sealed class CustomerCareTests
 
     private static CustomerReturnRequest ValidRequest() => new()
     {
-        Name = "Alex Morgan", Email = "alex.care@example.com",
+        Name = "Alex Morgan",
+        Email = "alex.care@example.com",
         Message = "Both external displays disconnect after a few minutes. I would prefer a compatible replacement."
     };
 
