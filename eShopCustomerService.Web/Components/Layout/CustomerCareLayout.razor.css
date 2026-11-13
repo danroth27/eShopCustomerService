@@ -1,0 +1,14 @@
+.care-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.care-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 24px 40px; border-bottom: 1px solid var(--cp-border); background: var(--cp-bg-elevated); }
+.care-header nav { display: flex; align-items: center; gap: 24px; font-size: 13px; }
+.care-header nav ::deep a:not(.button) { color: var(--cp-text-muted); }
+.care-header nav ::deep a.active { color: var(--cp-accent); }
+.care-header .brand > span { display: block; }
+.care-header .brand > .brand-mark { display: grid; }
+.care-main { width: min(1120px, 100%); margin: 0 auto; }
+.care-main ::deep .caption { font-size: 11px; color: var(--cp-text-soft); margin-top: 20px; }
+@media (max-width: 760px) {
+    .care-header { padding: 20px; flex-direction: column; align-items: flex-start; }
+    .care-header nav { flex-wrap: wrap; gap: 16px; }
+    .care-main { padding: 28px 20px; }
+}

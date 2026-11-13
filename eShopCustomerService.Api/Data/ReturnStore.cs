@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Text.Json;
 using eShopCustomerService.Contracts.Domain;
@@ -37,12 +38,106 @@ public sealed class ReturnStore : IDisposable
             CREATE TABLE IF NOT EXISTS Audit (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT, OrderId INTEGER NOT NULL REFERENCES Orders(Id),
                 Actor TEXT NOT NULL, Action TEXT NOT NULL, Timestamp TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS CustomerRequests (
+                Reference TEXT PRIMARY KEY, OrderId INTEGER NOT NULL REFERENCES Orders(Id),
+                Name TEXT NOT NULL, Email TEXT NOT NULL, Message TEXT NOT NULL, CreatedAt TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS DemoPermissions (
+                SessionId TEXT PRIMARY KEY, RefundApproval INTEGER NOT NULL CHECK(RefundApproval IN (0, 1)),
+                ExpiresAtUtc INTEGER NOT NULL);
             """;
         await command.ExecuteNonQueryAsync();
         command.CommandText = "SELECT COUNT(*) FROM Orders";
         if ((long)(await command.ExecuteScalarAsync())! == 0)
         {
             await SeedAsync(db);
+        }
+    }
+
+    public async Task CreateDemoPermissionAsync(
+        string sessionId, DateTimeOffset now, DateTimeOffset expiresAt, CancellationToken ct = default)
+    {
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            await using var command = db.CreateCommand();
+            command.CommandText = """
+                DELETE FROM DemoPermissions WHERE ExpiresAtUtc <= $now;
+                INSERT INTO DemoPermissions VALUES ($session, 1, $expires);
+                """;
+            command.Parameters.AddWithValue("$session", sessionId);
+            command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());
+            command.Parameters.AddWithValue("$expires", expiresAt.ToUnixTimeMilliseconds());
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        finally
+        {
+            writer.Release();
+        }
+    }
+
+    public async Task<bool?> RefreshDemoPermissionAsync(
+        string sessionId, DateTimeOffset now, DateTimeOffset expiresAt, CancellationToken ct = default)
+    {
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            await using var command = db.CreateCommand();
+            command.CommandText = """
+                UPDATE DemoPermissions SET ExpiresAtUtc = $expires
+                WHERE SessionId = $session AND ExpiresAtUtc > $now
+                RETURNING RefundApproval;
+                """;
+            command.Parameters.AddWithValue("$session", sessionId);
+            command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());
+            command.Parameters.AddWithValue("$expires", expiresAt.ToUnixTimeMilliseconds());
+            return await command.ExecuteScalarAsync(ct) is long allowed ? allowed != 0 : null;
+        }
+        finally
+        {
+            writer.Release();
+        }
+    }
+
+    public async Task<bool> SetDemoRefundApprovalAsync(
+        string sessionId, bool allowed, DateTimeOffset now, DateTimeOffset expiresAt, CancellationToken ct = default)
+    {
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            await using var command = db.CreateCommand();
+            command.CommandText = """
+                UPDATE DemoPermissions SET RefundApproval = $allowed, ExpiresAtUtc = $expires
+                WHERE SessionId = $session AND ExpiresAtUtc > $now;
+                """;
+            command.Parameters.AddWithValue("$session", sessionId);
+            command.Parameters.AddWithValue("$allowed", allowed ? 1 : 0);
+            command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());
+            command.Parameters.AddWithValue("$expires", expiresAt.ToUnixTimeMilliseconds());
+            return await command.ExecuteNonQueryAsync(ct) == 1;
+        }
+        finally
+        {
+            writer.Release();
+        }
+    }
+
+    public async Task RemoveDemoPermissionAsync(string sessionId, CancellationToken ct = default)
+    {
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            await using var command = db.CreateCommand();
+            command.CommandText = "DELETE FROM DemoPermissions WHERE SessionId = $session";
+            command.Parameters.AddWithValue("$session", sessionId);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        finally
+        {
+            writer.Release();
         }
     }
 
@@ -100,6 +195,64 @@ public sealed class ReturnStore : IDisposable
     {
         await using var db = await OpenAsync(ct);
         return await FindDraftAsync(db, null, id, ct);
+    }
+
+    public async Task<ResolutionResult<CustomerRequestReceipt>> SubmitCustomerRequestAsync(
+        CustomerReturnRequest request, CancellationToken ct = default)
+    {
+        var normalized = new CustomerReturnRequest
+        {
+            OrderId = request.OrderId,
+            Name = request.Name?.Trim() ?? "",
+            Email = request.Email?.Trim() ?? "",
+            Message = request.Message?.Trim() ?? ""
+        };
+        List<ValidationResult> errors = [];
+        if (!Validator.TryValidateObject(normalized, new ValidationContext(normalized), errors, validateAllProperties: true))
+        {
+            return new(new ResolutionFailure(
+                string.Join(" ", errors.Select(error => error.ErrorMessage)), ResolutionFailureKind.Invalid));
+        }
+
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            using var transaction = db.BeginTransaction();
+            var order = await FindCaseAsync(db, transaction, normalized.OrderId, ct);
+            if (order is null)
+            {
+                return new(new ResolutionFailure("The order was not found.", ResolutionFailureKind.NotFound));
+            }
+            if (order.Status != "Open")
+            {
+                return new(new ResolutionFailure("This return has already been resolved. Contact our care team for further help."));
+            }
+
+            var receipt = new CustomerRequestReceipt($"CARE-{Guid.NewGuid():N}".ToUpperInvariant(), order.OrderId);
+            await using var command = db.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO CustomerRequests (Reference, OrderId, Name, Email, Message, CreatedAt)
+                VALUES ($reference, $order, $name, $email, $message, $created);
+                UPDATE Orders SET Customer = $name, Email = $email, Reason = $message WHERE Id = $order;
+                """;
+            command.Parameters.AddWithValue("$reference", receipt.Reference);
+            command.Parameters.AddWithValue("$order", receipt.OrderId);
+            command.Parameters.AddWithValue("$name", normalized.Name);
+            command.Parameters.AddWithValue("$email", normalized.Email);
+            command.Parameters.AddWithValue("$message", normalized.Message);
+            command.Parameters.AddWithValue("$created", DateTimeOffset.UtcNow.ToString("O"));
+            await command.ExecuteNonQueryAsync(ct);
+            await AddAuditAsync(db, transaction, order.OrderId, normalized.Name,
+                $"Customer return request {receipt.Reference} received: {normalized.Message}", ct);
+            transaction.Commit();
+            return new(receipt);
+        }
+        finally
+        {
+            writer.Release();
+        }
     }
 
     public async Task<ResolutionResult<ResolutionDraft>> SaveDraftAsync(
@@ -365,6 +518,7 @@ public sealed class ReturnStore : IDisposable
         await using var command = db.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
+            DELETE FROM CustomerRequests;
             DELETE FROM Audit;
             DELETE FROM Drafts;
             DELETE FROM Orders;

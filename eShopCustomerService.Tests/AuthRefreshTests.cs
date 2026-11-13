@@ -5,6 +5,7 @@ using eShopCustomerService.Contracts.Domain;
 using eShopCustomerService.Web.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
@@ -97,6 +98,79 @@ public sealed class AuthRefreshTests
         oldClient.DefaultRequestHeaders.Add("Cookie", $"{cookie.Name}={cookie.Value}");
         using var stale = await oldClient.GetAsync("/api/returns");
         Assert.Equal(HttpStatusCode.Unauthorized, stale.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Host_replacement_preserves_current_permissions_and_sign_out_revocation(bool refundApproval)
+    {
+        var database = Path.Combine(Path.GetTempPath(), $"eshop-auth-restart-{Guid.NewGuid():N}.db");
+        SetCookieHeaderValue cookie;
+        try
+        {
+            using (var original = new DemoFactory(database, deleteOnDispose: false))
+            using (var client = original.Browser())
+            {
+                using var signedIn = await PostFormAsync(client, "/demo/sign-in", "returnUrl", "/");
+                cookie = ReadCookie(signedIn);
+                if (!refundApproval)
+                {
+                    using var removed = await PostFormAsync(client, "/demo/auth-refresh/permission", "refundApproval", "false");
+                    Assert.Equal(HttpStatusCode.Redirect, removed.StatusCode);
+                }
+            }
+            using (var replacement = new DemoFactory(database, deleteOnDispose: false))
+            using (var client = replacement.CreateClient(new()
+            {
+                BaseAddress = new("https://localhost"),
+                AllowAutoRedirect = false,
+                HandleCookies = false
+            }))
+            {
+                client.DefaultRequestHeaders.Add("Cookie", $"{cookie.Name}={cookie.Value}");
+                using var returns = await client.GetAsync("/api/returns");
+                Assert.Equal(HttpStatusCode.OK, returns.StatusCode);
+                using var refund = await client.PostAsJsonAsync("/api/drafts",
+                    new SaveResolutionRequest(48021, new Resolution(new RefundResolution(149m, "PAY-48021"))));
+                Assert.Equal(refundApproval ? HttpStatusCode.Created : HttpStatusCode.Forbidden, refund.StatusCode);
+                using var signedOut = await PostFormAsync(client, "/demo/sign-out", "confirmation", "SIGNOUT");
+                Assert.Equal(HttpStatusCode.Redirect, signedOut.StatusCode);
+            }
+            using var restartedAgain = new DemoFactory(database);
+            using var stale = restartedAgain.CreateClient(new()
+            {
+                BaseAddress = new("https://localhost"),
+                AllowAutoRedirect = false,
+                HandleCookies = false
+            });
+            stale.DefaultRequestHeaders.Add("Cookie", $"{cookie.Name}={cookie.Value}");
+            using var rejected = await stale.GetAsync("/api/returns");
+            Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+        }
+        finally
+        {
+            File.Delete(database);
+        }
+    }
+
+    [Fact]
+    public async Task A_valid_cookie_does_not_revive_an_expired_permission_record()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        using var signedIn = await PostFormAsync(client, "/demo/sign-in", "returnUrl", "/");
+        var session = ReadTicket(factory, signedIn).Principal.FindFirst(DemoAuthentication.SessionClaim)!.Value;
+        await using var db = new SqliteConnection($"Data Source={factory.DatabasePath};Pooling=False");
+        await db.OpenAsync();
+        await using var command = db.CreateCommand();
+        command.CommandText = "UPDATE DemoPermissions SET ExpiresAtUtc = 0 WHERE SessionId = $session";
+        command.Parameters.AddWithValue("$session", session);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+        using var rejected = await client.GetAsync("/api/returns");
+        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+        command.CommandText = "SELECT ExpiresAtUtc FROM DemoPermissions WHERE SessionId = $session";
+        Assert.Equal(0L, await command.ExecuteScalarAsync());
     }
 
     private static AuthenticationTicket ReadTicket(DemoFactory factory, HttpResponseMessage response)

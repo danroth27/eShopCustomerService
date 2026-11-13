@@ -16,30 +16,19 @@ Cookie: {{demoCookie}}
 GET {{host}}/api/inventory/DOCK-PRO-PLUS/availability
 Cookie: {{demoCookie}}
 
-### Prepare a draft without allocating stock or sending a message.
-POST {{host}}/api/agent-tools/returns/48024/prepare
-Cookie: {{demoCookie}}
-Content-Type: application/json
-
-{
-  "productCode": "DOCK-PRO-PLUS",
-  "deliveryAddress": "200 Demo Way, Seattle, WA 98101",
-  "customerReply": "Your replacement is awaiting approval."
-}
-
-### Confirm the exact reviewed replacement. Set draftId to the prepared draft.
+### Confirm the exact reviewed replacement directly, without a saved draft.
 # This deliberately allocates one unit locally when the details match.
 POST {{host}}/api/agent-tools/returns/48024/confirm
 Cookie: {{demoCookie}}
 Content-Type: application/json
 
 {
-  "draftId": "{{draftId}}",
   "productCode": "DOCK-PRO-PLUS",
   "deliveryAddress": "200 Demo Way, Seattle, WA 98101"
 }
 
 ### Confirm a draft through the ordinary application workflow.
+# Set draftId to a draft created through POST /api/drafts.
 POST {{host}}/api/resolutions/confirm
 Cookie: {{demoCookie}}
 Content-Type: application/json
@@ -78,4 +67,15 @@ Content-Type: application/json
 
 {
   "confirmation": "RESET"
+}
+
+### Submit an anonymous request for the featured fictional purchase only.
+POST {{host}}/api/customer-requests
+Content-Type: application/json
+
+{
+  "orderId": 48021,
+  "name": "Alex Morgan",
+  "email": "alex@example.com",
+  "message": "Both external displays disconnect. Please help me arrange a replacement."
 }

@@ -1,0 +1,8 @@
+.help-table { overflow-x: auto; }
+.help-table ::deep .customer-help-grid { width: 100%; border-collapse: collapse; }
+.help-table ::deep th { padding: 12px; text-align: left; border-bottom: 1px solid var(--cp-border); font-size: 12px; color: var(--cp-text-muted); }
+.help-table ::deep td { padding: 16px 12px; border-bottom: 1px solid var(--cp-border); font-size: 13px; vertical-align: top; }
+.help-table ::deep td small { display: block; margin-top: 6px; color: var(--cp-text-muted); }
+.help-table ::deep td:first-child { min-width: 260px; }
+.help-table ::deep .paginator { margin: 20px 0; font-size: 12px; }
+.caption { margin: 16px 0 0; }

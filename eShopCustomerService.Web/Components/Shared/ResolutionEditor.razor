@@ -3,9 +3,9 @@
 @inject IAuthorizationService Authorization
 @using eShopCustomerService.Contracts
 @using eShopCustomerService.Web.Agentic
-@implements IDisposable
+@implements IAsyncDisposable
 
-<section class="panel auth-refresh-panel">
+<section class="panel auth-refresh-panel" data-interactive="@RendererInfo.IsInteractive.ToString().ToLowerInvariant()">
     <div class="panel-heading"><div><span class="eyebrow">LIVE AUTHENTICATION REFRESH</span><h2>Same workspace. Current permissions.</h2></div>
         <AuthorizeView Policy="@DemoAuthentication.RefundPolicy">
             <Authorized><span class="badge success">Refund approval: allowed</span></Authorized>
@@ -13,7 +13,7 @@
         </AuthorizeView>
     </div>
     <p>Permissions update without reloading. Your unsaved delivery address and selected replacement stay here.</p>
-    <div class="auth-refresh-details"><span>Editor instance <code>@editorInstance</code></span>
+    <div class="auth-refresh-details"><span>Editor instance <code data-testid="component-instance">@editorInstance</code></span>
         <a href="/auth-refresh" target="_blank" rel="noopener">Open permission controls <span aria-hidden="true">&nearr;</span></a></div>
 </section>
 <section class="panel editor-panel">
@@ -71,7 +71,7 @@
             <div class="notice subtle"><Icon Name="shield" /><span>Availability is checked now. Stock is allocated only when you confirm.</span></div>
             <div class="editor-footer"><span>No shipment is created in this demo.</span>
                 <button class="button" type="submit" disabled="@(InteractionUnavailable || ValidationPending)">
-                    @(saving ? (ReviewRequested.HasDelegate ? "Opening review..." : "Saving draft...") : ValidationPending ? "Validating..." : "Review replacement") <Icon Name="arrow" />
+                    @(saving ? "Saving draft..." : ValidationPending ? "Validating..." : "Review replacement") <Icon Name="arrow" />
                 </button>
             </div>
         </EditForm>
@@ -83,7 +83,7 @@
         <div class="notice subtle"><Icon Name="shield" /><span>The amount and payment reference must match the original order.</span></div>
         <AuthorizeView Policy="@DemoAuthentication.RefundPolicy">
             <Authorized>
-                <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? (ReviewRequested.HasDelegate ? "Opening review..." : "Saving draft...") : "Review refund") <Icon Name="arrow" /></button></div>
+                <div class="editor-footer"><span>No real payment is issued.</span><button class="button" type="button" @onclick="SaveRefundAsync" disabled="@InteractionUnavailable">@(saving ? "Saving draft..." : "Review refund") <Icon Name="arrow" /></button></div>
             </Authorized>
             <NotAuthorized>
                 <div class="notice error" role="status">Refund approval is no longer available for this session. Your edits are preserved; you can still prepare a replacement.</div>
@@ -97,7 +97,6 @@
     [Parameter, EditorRequired] public CaseWorkspaceState State { get; set; } = default!;
     [Parameter] public EventCallback<CaseWorkspaceState> StateChanged { get; set; }
     [Parameter] public EventCallback<ResolutionDraft> DraftSaved { get; set; }
-    [Parameter] public EventCallback ReviewRequested { get; set; }
     [Parameter] public EventCallback<bool> SavingChanged { get; set; }
     [Parameter] public bool Disabled { get; set; }
     [CascadingParameter] private Task<AuthenticationState> AuthenticationState { get; set; } = default!;
@@ -153,7 +152,11 @@
         }
     }
 
-    public void Dispose() => editContext.OnValidationStateChanged -= HandleValidationStateChanged;
+    public ValueTask DisposeAsync()
+    {
+        editContext.OnValidationStateChanged -= HandleValidationStateChanged;
+        return ValueTask.CompletedTask;
+    }
 
     private Task ChangeKindAsync(string kind) =>
         StateChanged.InvokeAsync(CaseWorkspaceUpdates.Edit(State, resolutionKind: kind));
@@ -191,11 +194,6 @@
                 && !(await Authorization.AuthorizeAsync(user, DemoAuthentication.RefundPolicy)).Succeeded)
             {
                 error = "Refund approval is required. Your unsaved work has been preserved.";
-                return;
-            }
-            if (ReviewRequested.HasDelegate)
-            {
-                await ReviewRequested.InvokeAsync();
                 return;
             }
             var result = await Store.SaveDraftAsync(new(Order.OrderId, resolution));

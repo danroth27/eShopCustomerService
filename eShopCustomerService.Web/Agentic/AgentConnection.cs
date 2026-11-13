@@ -24,8 +24,9 @@ public sealed class AgentConnection(
         }
 
         var options = cookieOptions.Get(CookieAuthenticationDefaults.AuthenticationScheme);
+        var now = (options.TimeProvider ?? TimeProvider.System).GetUtcNow();
         var ticket = new AuthenticationTicket(user,
-            new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(30) },
+            new AuthenticationProperties { IssuedUtc = now, ExpiresUtc = now + options.ExpireTimeSpan },
             CookieAuthenticationDefaults.AuthenticationScheme);
         var http = clients.CreateClient("agentic");
         // The agent forwards this server-side cookie to the application API, which owns

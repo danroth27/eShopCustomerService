@@ -1,0 +1,38 @@
+@page "/care/received"
+
+<PageTitle>Request received | eShop</PageTitle>
+<section class="confirmation panel">
+    <span class="eyebrow">YOUR NEXT STEP</span>
+    <h1>@(LastRequest is null ? "Need a hand?" : "We've got your request.")</h1>
+    @if (displayedMessage is not null)
+    {
+        <p class="notice success" data-testid="flash-message">@displayedMessage</p>
+    }
+    @if (LastRequest is not null)
+    {
+        <p>Request <strong data-testid="request-reference">@LastRequest</strong><br />Order #48021 / USB-C Dock Pro</p>
+        <p>Our representative can now review your message on the same return case and prepare a refund or replacement.</p>
+        <p class="caption">Your HTTP session remembers this reference. The request itself is saved in SQLite, independently of the session.</p>
+    }
+    else
+    {
+        <p>No request is remembered in this browser session. Visit the return form to contact our care team about the fictional sample purchase.</p>
+    }
+    <a class="button" href="/care/help/after-request">What happens next?</a>
+    <a class="button secondary" href="/care/request">Back to the return form</a>
+</section>
+
+@code {
+    [SupplyParameterFromTempData(Name = "care-message")]
+    public string? Message { get; set; }
+    [SupplyParameterFromSession(Name = "care-request")]
+    public string? LastRequest { get; set; }
+    private string? displayedMessage;
+
+    protected override void OnInitialized()
+    {
+        // Clear the two-way property so TempData's thank-you is consumed only once.
+        displayedMessage = Message;
+        Message = null;
+    }
+}

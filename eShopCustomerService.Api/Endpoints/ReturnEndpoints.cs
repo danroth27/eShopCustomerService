@@ -14,6 +14,25 @@ public static class ReturnEndpoints
     public static void MapReturnEndpoints(this WebApplication app)
     {
         var api = app.MapGroup("/api");
+        api.MapPost("/customer-requests", async Task<Results<Ok<CustomerRequestReceipt>, ProblemHttpResult>> (
+            CustomerReturnRequest request, ReturnStore store, ILogger<ReturnStore> logger, CancellationToken ct) =>
+        {
+            if (request.OrderId != 48021)
+            {
+                logger.LogWarning("Customer care request rejected for non-demo order {OrderId}", request.OrderId);
+                return Problem(new("Customer care requests are limited to sample order 48021.", ResolutionFailureKind.Invalid));
+            }
+            var result = await store.SubmitCustomerRequestAsync(request, ct);
+            if (result is ResolutionFailure rejected)
+            {
+                logger.LogWarning("Customer care request rejected for order {OrderId}: {Reason}", request.OrderId, rejected.Message);
+            }
+            return result switch
+            {
+                CustomerRequestReceipt receipt => TypedResults.Ok(receipt),
+                ResolutionFailure failure => Problem(failure)
+            };
+        }).AllowAnonymous();
         var protectedApi = api.MapGroup("").RequireAuthorization("CustomerService");
         protectedApi.MapGet("/returns", (ReturnStore store, CancellationToken ct) => store.GetCasesAsync(ct));
         protectedApi.MapGet("/returns/{orderId:int}", async Task<Results<Ok<ReturnCase>, NotFound>> (

@@ -1,0 +1,17 @@
+.shutdown-form {
+    margin: 24px 0;
+}
+
+.shutdown-form label {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.shutdown-form input {
+    width: auto;
+    flex-shrink: 0;
+    margin-top: 5px;
+    padding: 0;
+}

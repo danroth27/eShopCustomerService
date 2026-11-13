@@ -4,13 +4,110 @@ using System.Text;
 using System.Text.Json;
 using eShopCustomerService.Api.Data;
 using eShopCustomerService.Contracts.Domain;
+using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace eShopCustomerService.Tests;
 
 public sealed class ReturnsTests
 {
+    [Theory]
+    [InlineData("/returns/48021")]
+    [InlineData("/service-queue")]
+    public async Task Interactive_pages_enable_auto_pause_without_a_query_parameter(string path)
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        using var response = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var html = await response.Content.ReadAsStringAsync();
+        var configuration = Regex.Match(html, "<!--Blazor-Configuration:([^>]+)-->");
+        Assert.True(configuration.Success, "The page must emit its app-wide browser configuration.");
+        using var options = JsonDocument.Parse(Convert.FromBase64String(configuration.Groups[1].Value));
+        var server = options.RootElement.GetProperty("server");
+        Assert.True(server.GetProperty("autoPauseEnabled").GetBoolean());
+        Assert.Equal(8000, server.GetProperty("autoPauseHiddenDelayMilliseconds").GetInt32());
+        Assert.DoesNotContain("Preview without saving", html);
+    }
+
+    [Fact]
+    public async Task Operations_requires_a_representative_session()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        using var page = await client.GetAsync("/operations");
+        Assert.Equal(HttpStatusCode.Redirect, page.StatusCode);
+        Assert.Equal("/sign-in", page.Headers.Location!.AbsolutePath);
+        using var post = await client.PostAsync("/operations", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["_handler"] = "stop-service",
+            ["ConfirmShutdown"] = "true"
+        }));
+        Assert.Equal(HttpStatusCode.Redirect, post.StatusCode);
+        Assert.Equal("/sign-in", post.Headers.Location!.AbsolutePath);
+        Assert.False(factory.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Operations_only_stops_the_service_after_explicit_confirmation(bool confirmed)
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        using var page = await client.GetAsync("/operations");
+        page.EnsureSuccessStatusCode();
+        Assert.DoesNotContain("\"type\":\"server\"", await page.Content.ReadAsStringAsync());
+        var lifetime = factory.Services.GetRequiredService<IHostApplicationLifetime>();
+        Assert.False(lifetime.ApplicationStopping.IsCancellationRequested);
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = lifetime.ApplicationStopping.Register(() => stopping.TrySetResult());
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/operations")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["_handler"] = "stop-service",
+                ["ConfirmShutdown"] = confirmed ? "true" : "false"
+            })
+        };
+        request.Headers.Add("Sec-Fetch-Site", "same-origin");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(confirmed ? "Stopping this service." : "Confirm that you want to stop this service.",
+            await response.Content.ReadAsStringAsync());
+        if (confirmed)
+        {
+            // Response.OnCompleted can request shutdown after the client receives the response body.
+            await stopping.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Assert.Equal(confirmed, lifetime.ApplicationStopping.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task Operations_rejects_cross_origin_shutdown_forms()
+    {
+        using var factory = new DemoFactory();
+        using var client = factory.Browser();
+        await DemoFactory.SignInAsync(client);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/operations")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["_handler"] = "stop-service",
+                ["ConfirmShutdown"] = "true"
+            })
+        };
+        request.Headers.Add("Sec-Fetch-Site", "cross-site");
+        request.Headers.Add("Origin", "https://example.invalid");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.False(factory.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.IsCancellationRequested);
+    }
+
     [Theory]
     [InlineData("""{"amount":149,"paymentReference":"PAY-48021"}""", typeof(RefundResolution))]
     [InlineData("""{"productCode":"DOCK-PRO-PLUS","deliveryAddress":"120 Market Street"}""", typeof(ReplacementResolution))]

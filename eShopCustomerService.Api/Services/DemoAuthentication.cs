@@ -1,60 +1,77 @@
-using System.Collections.Concurrent;
 using System.Security.Claims;
+using eShopCustomerService.Api.Data;
 using eShopCustomerService.Contracts;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Extensions.Options;
 
 namespace eShopCustomerService.Api.Services;
 
-public sealed class DemoAuthentication(ILogger<DemoAuthentication> logger)
+public sealed class DemoAuthentication(
+    ReturnStore store, IOptionsMonitor<CookieAuthenticationOptions> options, ILogger<DemoAuthentication> logger)
 {
     public const string SessionClaim = AgentIdentityResponse.SessionClaim;
     public const string RefundPolicy = "ApproveRefund";
     public const string PermissionControlsPolicy = "ManageRefundPermission";
 
-    private readonly ConcurrentDictionary<string, bool> sessions = new();
-
-    public AgentIdentityResponse CreateSession(ClaimsPrincipal user)
+    public async Task<AgentIdentityResponse> CreateSessionAsync(ClaimsPrincipal user, CancellationToken ct)
     {
-        RemoveSession(user);
+        await RemoveSessionAsync(user, ct);
         var session = Guid.NewGuid().ToString("N");
-        sessions[session] = true;
+        var properties = NewTicketProperties();
+        await store.CreateDemoPermissionAsync(session, properties.IssuedUtc!.Value, properties.ExpiresUtc!.Value, ct);
         return new("demo-representative", "Taylor Brooks", session, RefundApproval: true);
     }
 
-    public void SignOut(ClaimsPrincipal user)
-    {
-        RemoveSession(user);
-    }
+    public Task SignOutAsync(ClaimsPrincipal user, CancellationToken ct) => RemoveSessionAsync(user, ct);
 
-    public AgentIdentityResponse SetRefundApproval(ClaimsPrincipal user, bool allowed)
+    public async Task<AgentIdentityResponse> SetRefundApprovalAsync(ClaimsPrincipal user, bool allowed, CancellationToken ct)
     {
         var session = user.FindFirstValue(SessionClaim)
             ?? throw new InvalidOperationException("A customer-service session is required.");
-        sessions[session] = allowed;
+        var properties = NewTicketProperties();
+        if (!await store.SetDemoRefundApprovalAsync(
+            session, allowed, properties.IssuedUtc!.Value, properties.ExpiresUtc!.Value, ct))
+        {
+            logger.LogWarning("Cannot change permissions for a missing or expired customer-service session");
+            throw new BadHttpRequestException("The demo session has expired. Sign in again.", StatusCodes.Status401Unauthorized);
+        }
         return new("demo-representative", "Taylor Brooks", session, allowed);
     }
 
-    public Task ValidatePrincipalAsync(CookieValidatePrincipalContext context)
+    public async Task ValidatePrincipalAsync(CookieValidatePrincipalContext context)
     {
-        if (context.Principal?.FindFirstValue(SessionClaim) is not { } session
-            || !sessions.TryGetValue(session, out var allowed))
+        var now = (context.Options.TimeProvider ?? TimeProvider.System).GetUtcNow();
+        var lifetime = context.Properties is { IssuedUtc: { } issued, ExpiresUtc: { } expires }
+            ? expires - issued : context.Options.ExpireTimeSpan;
+        var allowed = context.Principal?.FindFirstValue(SessionClaim) is { } session
+            ? await store.RefreshDemoPermissionAsync(
+                session, now, now + lifetime, context.HttpContext.RequestAborted)
+            : null;
+        if (allowed is null)
         {
             logger.LogWarning("Customer-service session is no longer available; sign in again");
             context.RejectPrincipal();
-            return Task.CompletedTask;
+            return;
         }
 
-        context.ReplacePrincipal(CreatePrincipal(session, allowed));
+        context.ReplacePrincipal(CreatePrincipal(context.Principal!.FindFirstValue(SessionClaim)!, allowed.Value));
         context.ShouldRenew = true;
-        return Task.CompletedTask;
     }
 
-    private void RemoveSession(ClaimsPrincipal user)
+    private async Task RemoveSessionAsync(ClaimsPrincipal user, CancellationToken ct)
     {
         if (user.FindFirstValue(SessionClaim) is { } session)
         {
-            sessions.TryRemove(session, out _);
+            await store.RemoveDemoPermissionAsync(session, ct);
         }
+    }
+
+    private AuthenticationProperties NewTicketProperties()
+    {
+        var cookieOptions = options.Get(CookieAuthenticationDefaults.AuthenticationScheme);
+        var now = (cookieOptions.TimeProvider ?? TimeProvider.System).GetUtcNow();
+        return new() { IssuedUtc = now, ExpiresUtc = now + cookieOptions.ExpireTimeSpan };
     }
 
     private static ClaimsPrincipal CreatePrincipal(string session, bool refundApproval)

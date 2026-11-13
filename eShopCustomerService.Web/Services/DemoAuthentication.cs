@@ -2,10 +2,12 @@ using System.Security.Claims;
 using eShopCustomerService.Contracts;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Extensions.Options;
 
 namespace eShopCustomerService.Web.Services;
 
-public sealed class DemoAuthentication(CustomerServiceClient api, ILogger<DemoAuthentication> logger)
+public sealed class DemoAuthentication(
+    CustomerServiceClient api, IOptionsMonitor<CookieAuthenticationOptions> options, ILogger<DemoAuthentication> logger)
 {
     public const string SessionClaim = AgentIdentityResponse.SessionClaim;
     public const string RefundPolicy = "ApproveRefund";
@@ -14,7 +16,8 @@ public sealed class DemoAuthentication(CustomerServiceClient api, ILogger<DemoAu
     public async Task SignInAsync(HttpContext context)
     {
         var identity = await api.CreateSessionAsync(context.User, context.RequestAborted);
-        await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, CreatePrincipal(identity));
+        await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
+            CreatePrincipal(identity), NewTicketProperties());
     }
 
     public async Task SignOutAsync(HttpContext context)
@@ -26,7 +29,8 @@ public sealed class DemoAuthentication(CustomerServiceClient api, ILogger<DemoAu
     public async Task SetRefundApprovalAsync(HttpContext context, bool allowed)
     {
         var identity = await api.SetRefundApprovalAsync(context.User, allowed, context.RequestAborted);
-        await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, CreatePrincipal(identity));
+        await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme,
+            CreatePrincipal(identity), NewTicketProperties());
     }
 
     public async Task ValidatePrincipalAsync(CookieValidatePrincipalContext context)
@@ -40,6 +44,13 @@ public sealed class DemoAuthentication(CustomerServiceClient api, ILogger<DemoAu
         }
         context.ReplacePrincipal(CreatePrincipal(identity));
         context.ShouldRenew = true;
+    }
+
+    private AuthenticationProperties NewTicketProperties()
+    {
+        var cookieOptions = options.Get(CookieAuthenticationDefaults.AuthenticationScheme);
+        var now = (cookieOptions.TimeProvider ?? TimeProvider.System).GetUtcNow();
+        return new() { IssuedUtc = now, ExpiresUtc = now + cookieOptions.ExpireTimeSpan };
     }
 
     private static ClaimsPrincipal CreatePrincipal(AgentIdentityResponse identity)

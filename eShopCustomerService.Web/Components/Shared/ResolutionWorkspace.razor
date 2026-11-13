@@ -6,45 +6,52 @@
 @inject AgentConnection Connection
 @inject NavigationManager Navigation
 @inject WorkspaceService Store
-@implements IDisposable
+@implements IAsyncDisposable
 
-<div class="resolution-workspace @(_agent is null ? "" : "with-agent")">
-    <div class="resolution-editor-column">
-        @if (State.Status != "Resolved")
-        {
-            <ResolutionEditor Order="Order" State="State" StateChanged="UpdateState" DraftSaved="DraftSavedAsync"
-                              ReviewRequested="EditorReview" SavingChanged="SavingChanged" Disabled="Busy" />
-        }
-        <ResolutionReplyEditor State="State" StateChanged="UpdateState" Disabled="@(Busy || _saving)"
-                               PreviewPending="@(_agent?.State.HasPendingPredictiveState == true)" />
-        @if (State.Status == "Resolved")
-        {
-            <section class="panel">
-                <div class="panel-heading"><h2>Resolution recorded</h2><span class="badge">Resolved</span></div>
-                <p>The application recorded this resolution. The customer reply remains unsent.</p>
-            </section>
-        }
-    </div>
-    @if (_agent is not null)
-    {
-        <ResolutionAgentPanel Agent="_agent" Status="_status" StatusChanged="ChangeStatus" Saving="_saving" />
-    }
-</div>
-@if (_reviewState is { } review)
+@if (Draft is null)
 {
-    <div class="agent-review-backdrop">
-        <section class="panel agent-review">
-            <div class="panel-heading">
-                <div><span class="eyebrow">OPENED BY A FRONTEND TOOL</span><h2>Resolution review</h2></div>
-                <button class="button secondary" @onclick="() => _reviewState = null">Close review</button>
-            </div>
-            <ResolutionSummary Resolution="@(review.ResolutionKind == "refund"
-                ? new Resolution(new RefundResolution(review.RefundAmount, review.PaymentReference))
-                : new Resolution(new ReplacementResolution(review.ProductCode, review.DeliveryAddress)))" />
-            <div class="agent-reply"><span class="eyebrow">CUSTOMER REPLY / NOT SENT</span><p>@review.CustomerReply</p></div>
-            <p class="agent-hint">Reviewing is not approval. No stock or payment has been committed.</p>
-        </section>
+    <p role="status">Loading the resolution editor...</p>
+}
+else
+{
+    <div class="resolution-workspace @(_agent is null ? "" : "with-agent")">
+        <div class="resolution-editor-column">
+            @if (State.Status != "Resolved")
+            {
+                <ResolutionEditor Order="Order" State="State" StateChanged="UpdateState" DraftSaved="DraftSavedAsync"
+                                  SavingChanged="SavingChanged" Disabled="Busy" />
+            }
+            <ResolutionReplyEditor State="State" StateChanged="UpdateState" Disabled="@(Busy || _saving)"
+                                   PreviewPending="@(_agent?.State.HasPendingPredictiveState == true)" />
+            @if (State.Status == "Resolved")
+            {
+                <section class="panel">
+                    <div class="panel-heading"><h2>Resolution recorded</h2><span class="badge">Resolved</span></div>
+                    <p>The application recorded this resolution. The customer reply remains unsent.</p>
+                </section>
+            }
+        </div>
+        @if (_agent is not null)
+        {
+            <ResolutionAgentPanel Agent="_agent" Status="_status" StatusChanged="ChangeStatus" Saving="_saving" />
+        }
     </div>
+    @if (_reviewState is { } review)
+    {
+        <div class="agent-review-backdrop">
+            <section class="panel agent-review">
+                <div class="panel-heading">
+                    <div><span class="eyebrow">OPENED BY A FRONTEND TOOL</span><h2>Resolution review</h2></div>
+                    <button class="button secondary" @onclick="() => _reviewState = null">Close review</button>
+                </div>
+                <ResolutionSummary Resolution="@(review.ResolutionKind == "refund"
+                    ? new Resolution(new RefundResolution(review.RefundAmount, review.PaymentReference))
+                    : new Resolution(new ReplacementResolution(review.ProductCode, review.DeliveryAddress)))" />
+                <div class="agent-reply"><span class="eyebrow">CUSTOMER REPLY / NOT SENT</span><p>@review.CustomerReply</p></div>
+                <p class="agent-hint">Reviewing is not approval. No stock or payment has been committed.</p>
+            </section>
+        </div>
+    }
 }
 
 @code {
@@ -54,28 +61,30 @@
     private UIAgent<CaseWorkspaceState>? _agent;
     private IChatClient? _chatClient;
     private IDisposable? _stateSubscription;
-    private CaseWorkspaceState _state = new();
+    [PersistentState] public PersistedDraft? Draft { get; set; }
     private CaseWorkspaceState? _reviewState;
     private ConversationStatus _status;
     private bool _saving;
     private bool _reportedResolution;
-    private CaseWorkspaceState State => _agent?.State.Value ?? _state;
+    private CaseWorkspaceState State => _agent?.State.Value ?? Draft!.Value;
     private bool Busy => _status is ConversationStatus.Streaming or ConversationStatus.AwaitingInput;
-    private EventCallback EditorReview => _agent is null ? default : EventCallback.Factory.Create(this, ReviewEditorAsync);
 
     protected override async Task OnInitializedAsync()
     {
         var user = (await Authentication).User;
-        _state = new()
+        Draft ??= new()
         {
-            OrderId = Order.OrderId,
-            DeliveryAddress = Order.DeliveryAddress,
-            RefundAmount = Order.PaidAmount,
-            PaymentReference = $"PAY-{Order.OrderId}",
-            RefundApprovalAllowed = user.IsInRole("RefundApprover"),
-            AvailableProducts = await Store.GetInventoryAsync()
+            Value = new()
+            {
+                OrderId = Order.OrderId,
+                DeliveryAddress = Order.DeliveryAddress,
+                RefundAmount = Order.PaidAmount,
+                PaymentReference = $"PAY-{Order.OrderId}",
+                RefundApprovalAllowed = user.IsInRole("RefundApprover"),
+                AvailableProducts = await Store.GetInventoryAsync()
+            }
         };
-        if (!Connection.IsConfigured)
+        if (!Connection.IsConfigured || State.Status == "Resolved")
         {
             return;
         }
@@ -105,7 +114,7 @@
                 }
             };
             options.StateMapper = context => CaseWorkspaceUpdates.Map(context, _agent!.State);
-        }, _state);
+        }, State);
         _stateSubscription = _agent.State.OnChanged(RefreshWorkspace);
     }
 
@@ -120,11 +129,8 @@
 
     private void UpdateState(CaseWorkspaceState state)
     {
-        if (_agent is null)
-        {
-            _state = state;
-        }
-        else
+        Draft!.Value = state;
+        if (_agent is not null)
         {
             _agent.State.Value = state;
         }
@@ -169,16 +175,18 @@
         return "Resolution review opened in the Blazor UI. No approval was given and the reply remains unsent.";
     }
 
-    private async Task ReviewEditorAsync()
-    {
-        await ShowResolutionReviewAsync();
-    }
-
     private async void RefreshWorkspace()
     {
         try
         {
-            await InvokeAsync(StateHasChanged);
+            await InvokeAsync(() =>
+            {
+                if (!_agent!.State.HasPendingPredictiveState)
+                {
+                    Draft!.Value = _agent.State.Value;
+                }
+                StateHasChanged();
+            });
         }
         catch (Exception error)
         {
@@ -186,10 +194,17 @@
         }
     }
 
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
         _stateSubscription?.Dispose();
         _agent?.Dispose();
         (_chatClient as IDisposable)?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    // Persistence can reapply its initial reference when cascading parameters update.
+    public sealed class PersistedDraft
+    {
+        public CaseWorkspaceState Value { get; set; } = new();
     }
 }

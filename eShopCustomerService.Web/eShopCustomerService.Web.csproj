@@ -11,6 +11,8 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.AI" Version="0.1.0-preview.1.26466.103" />
     <PackageReference Include="AGUI.Client" Version="1.0.1" />
     <PackageReference Include="Markdig" Version="1.5.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.QuickGrid" Version="11.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.Server.AutoPause" Version="11.0.0" />
     <ProjectReference Include="..\eShopCustomerService.ServiceDefaults\eShopCustomerService.ServiceDefaults.csproj" />
   </ItemGroup>
 

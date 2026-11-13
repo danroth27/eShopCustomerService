@@ -1,0 +1,66 @@
+@using Microsoft.AspNetCore.Components.QuickGrid
+
+<section class="panel">
+    <div class="panel-heading"><div><h2>Help library</h2><p>Practical guidance for your USB-C Dock Pro.</p></div></div>
+    <div class="help-table">
+        <QuickGrid Items="articles" Pagination="pagination" Class="customer-help-grid">
+            <TemplateColumn Title="Article" Sortable="true" SortBy="titleSort" Context="article">
+                <a href="@($"/care/help/{article.Slug}")">@article.Title</a>
+                <small>@article.Description</small>
+            </TemplateColumn>
+            <PropertyColumn Property="@(article => article.Category)" Title="Category" Sortable="true" />
+            <PropertyColumn Property="@(article => article.ReadMinutes)" Title="Minutes to read" />
+        </QuickGrid>
+        <Paginator State="pagination" />
+    </div>
+    <p class="caption">Help region generated at <time data-testid="cache-time">@renderedAt UTC</time>.</p>
+</section>
+
+@code {
+    public sealed record HelpArticle(string Slug, string Title, string Description, string Category, int ReadMinutes, string[] Guidance);
+
+    public static IReadOnlyList<HelpArticle> Articles { get; } =
+    [
+        new("display-connections", "Fix intermittent display connections", "Power, cables, and display settings to check first.", "Setup", 3,
+        [
+            "Connect the dock's power adapter and use the USB-C cable supplied with the dock. Plug it into a laptop port that supports video output; some USB-C ports support only data or charging.",
+            "Disconnect the dock, restart your laptop, and reconnect one display at a time. Check that each display is using the correct input and that both video cables are seated securely.",
+            "If the problem continues, note your laptop model, display models, and when disconnections happen. Include those details in your return request so our care team does not ask you to repeat the same checks."
+        ]),
+        new("charging", "Check dock charging and power", "Understand the adapter and laptop charging requirements.", "Setup", 2,
+        [
+            "Connect the dock's adapter directly to a working outlet. A USB-C connection alone does not provide the dock's full charging capability.",
+            "USB-C Dock Pro supports up to 90W charging. Your laptop must support USB-C charging, and a laptop that needs more power may still require its own adapter.",
+            "If neither charging nor connected devices work, unplug the adapter and dock, reconnect them, and test a different outlet. Stop using equipment with visible cable or adapter damage and describe the issue in your request."
+        ]),
+        new("return-window", "Understand the 30-day return window", "What to include when requesting a return.", "Returns", 2,
+        [
+            "Start your return within 30 days of delivery. For this fictional purchase, Alex Morgan's order #48021 was delivered on October 22, 2026.",
+            "Tell us what is wrong and whether you prefer a refund or a replacement. Our representative reviews the original order and prepares a resolution; submitting the form does not automatically issue a refund or create a shipment.",
+            "Keep the dock, adapter, and included cables together while you wait for instructions. Read the returns policy for the complete next-step guidance."
+        ]),
+        new("replacement-options", "Choose a compatible replacement", "What happens when the original model is unavailable.", "Returns", 3,
+        [
+            "Our representative checks availability before confirming a replacement. The sample USB-C Dock Pro is out of stock, while the compatible USB-C Dock Pro+ is available.",
+            "The Pro+ supports dual 4K displays and up to 100W charging. Tell us about your laptop and displays so the representative can review the proposed option with you.",
+            "An availability check is not a reservation. Stock is allocated only when the representative confirms the replacement. If stock changes, they must choose an available alternative."
+        ]),
+        new("packing", "Pack your dock for a return", "Protect the device and keep its accessories together.", "Shipping", 2,
+        [
+            "Wait for the care team's return instructions before sending anything. The sample does not generate a shipping label or arrange a collection.",
+            "Disconnect all cables and pack the dock, power adapter, and included cables securely. Use the original packaging if you still have it, or a sturdy box with cushioning that prevents movement.",
+            "Keep a copy of the instructions and any carrier receipt. Do not put passwords, payment-card details, or unrelated personal documents in the box or your request."
+        ]),
+        new("after-request", "What happens after your request", "Your reference, the review, and the final resolution.", "Customer care", 2,
+        [
+            "After a valid submission, we save a request reference and update the existing return case. Keep the reference from the confirmation page for your conversation with the care team.",
+            "A representative sees your message and contact details on order #48021, then prepares either a full refund or a compatible replacement. They review and confirm that resolution separately.",
+            "The confirmation message appears once, while your browser's HTTP session remembers the reference. The request itself is stored in SQLite and remains available to the representative even if that browser session ends."
+        ])
+    ];
+
+    private readonly IQueryable<HelpArticle> articles = Articles.AsQueryable();
+    private readonly PaginationState pagination = new() { ItemsPerPage = 3 };
+    private readonly GridSort<HelpArticle> titleSort = GridSort<HelpArticle>.ByAscending(article => article.Title);
+    private readonly string renderedAt = DateTimeOffset.UtcNow.ToString("HH:mm:ss.fff");
+}

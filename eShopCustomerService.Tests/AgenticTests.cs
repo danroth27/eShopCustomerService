@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Runtime.CompilerServices;
 using AGUI.Abstractions;
 using eShopCustomerService.Contracts;
@@ -93,6 +94,10 @@ public sealed class AgenticTests
         Assert.Contains("customer-reply", html);
         Assert.Contains("Resolve this return", html);
         Assert.Contains("Work the case together", html);
+        var configuration = Regex.Match(html, "<!--Blazor-Configuration:([^>]+)-->");
+        Assert.True(configuration.Success);
+        using var options = JsonDocument.Parse(Convert.FromBase64String(configuration.Groups[1].Value));
+        Assert.False(options.RootElement.GetProperty("server").GetProperty("autoPauseEnabled").GetBoolean());
         Assert.Contains("class=\"agent-chat-controls\" disabled", html);
         Assert.DoesNotContain("Replacement plan", html);
     }

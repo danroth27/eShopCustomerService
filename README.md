@@ -1,17 +1,16 @@
 # eShop Customer Service
 
-A focused returns-and-exchanges workspace showing web development features in **.NET 11**: C# unions with JSON and OpenAPI, shared asynchronous validation in Blazor and Minimal APIs, automatic CSRF protection for form submissions, authentication refresh without reconnecting, and an agent integrated into the resolution editor using the experimental Blazor AI components.
+A cohesive customer-care and returns workspace showing web development features in **.NET 11**: static SSR, enhanced navigation and forms, client-side validation, caching, component persistence and circuit pause/resume, C# unions with JSON and OpenAPI, shared asynchronous validation, automatic CSRF protection, authentication refresh without reconnecting, and an optional agent integrated into the resolution editor using the experimental Blazor AI components.
 
-This is a self-contained companion scenario for [dotnet/eShop](https://github.com/dotnet/eShop), not an upstream extension or a connected deployment. Its fictional orders and inventory are stored locally. It does not call eShop services, issue payments, or create shipments. See [SPEC.md](SPEC.md) for the application specification.
+This is a self-contained companion scenario for [dotnet/eShop](https://github.com/dotnet/eShop), not an upstream extension or a connected deployment. Its fictional orders and inventory are stored locally. It does not call eShop services, issue payments, or create shipments.
 
 ## Run locally
 
-Use the stable .NET 11 SDK (`11.0.100` or later) and the [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6. This agentic demo requires an existing Microsoft Foundry model deployment and an Azure identity with inference access. Configure the local user secrets using the [agentic demo setup](#agentic-customer-service-demo) before starting. No containers are required.
+Use the stable .NET 11 SDK (`11.0.100` or later) and the [Aspire CLI](https://aspire.dev/get-started/install-cli/) 13.6. No containers or cloud configuration are required for the non-AI workflows. To include the agent, configure an existing Microsoft Foundry model deployment using the [agentic demo setup](#agentic-customer-service-demo).
 
 ```powershell
 aspire start
 aspire wait api
-aspire wait agentserver
 aspire wait customerservice
 aspire wait crossorigin
 aspire describe
@@ -20,6 +19,8 @@ aspire describe
 Open the **HTTPS** `customerservice` URL shown by Aspire and select **Enter demo workspace**. This creates a local representative session, not a verified identity. All hosts refuse to start outside Development.
 
 Use `aspire stop` to stop the application. The database in `eShopCustomerService.Api\App_Data\returns.db` survives restarts; **Reset demo data** on the overview restores the seeded scenario. When upgrading an older checkout, stop the app and copy its existing `eShopCustomerService.Web\App_Data\returns.db` to that API location before the first start; do not overwrite an existing API database. Never use real customer data or expose these local demonstration hosts to a network.
+
+When running from a git worktree alongside another instance, use `aspire start --isolated`.
 
 The interface follows the system light/dark preference. A full page load with `?scoutTheme=light` or `?scoutTheme=dark` overrides it for that document.
 
@@ -48,12 +49,12 @@ For presentation, start the resources, reset the demo data, and warm the interac
 
 Authentication refresh is part of every workspace session. There is no separate Start/End mode. The app keeps its normal long-lived authentication cookie and sets `MaximumAuthenticationExpiration` to 20 seconds on the Blazor connection. The built-in client normally reauthenticates about every 10 seconds. This short connection-authentication window makes the feature visible during a presentation; it is not the cookie lifetime or a production revocation recommendation.
 
-1. Enter the workspace and open an unresolved return: normally 48021, or 48022 after the CSRF walkthrough resolves 48021. Open browser Network tools before loading the editor and retain the log.
+1. Enter the workspace and open an unresolved return: normally 48021, or 48022 after the CSRF walkthrough resolves 48021. Open browser Network tools before loading the editor and retain the log. Use **Open permission controls**, then move the controls tab to a second window beside the editor. Keep the editor visible throughout this demo so the eight-second Auto Pause policy doesn't replace its circuit.
 2. Select the available **USB-C Dock Pro+** and change the delivery address to `200 Demo Way`. Leave this replacement unsaved. Note the **Editor instance** value above the form.
-3. Use **Open permission controls** to open a second tab. Select **Remove refund approval**. This issues an updated cookie in the same browser. Return to the original editor without reloading; the next scheduled refresh normally changes **Refund approval: allowed** to **removed** within about 10 seconds. The editor instance, selected product, and unsaved address remain unchanged.
+3. In the permission-controls window, select **Remove refund approval**. This issues an updated cookie in the same browser. Watch the original editor without reloading; the next scheduled refresh normally changes **Refund approval: allowed** to **removed** within about 10 seconds. The editor instance, selected product, and unsaved address remain unchanged.
 4. Select **Refund**. The review action is replaced by a permission warning. This is not just hidden UI: the interactive save handler, draft API, and HTTP confirmation endpoint each independently enforce the refund policy. Replacement preparation remains available.
-5. In the controls tab, select **Restore refund approval**. Return to the original editor and wait for the badge and **Review refund** action to return. Switch back to **Replacement** to show the unsaved address and product are still present. No draft or resolution has been committed.
-6. Leave refund approval restored and close the controls tab before continuing other demos. No session restart or extra sign-in is needed.
+5. In the controls window, select **Restore refund approval**. Wait for the original editor's badge and **Review refund** action to return. Switch back to **Replacement** to show the unsaved address and product are still present. No draft or resolution has been committed.
+6. Leave refund approval restored and close the controls window before continuing other demos. No session restart or extra sign-in is needed.
 
 For a technical close-up, filter Network for `_blazor`: the existing WebSocket remains open while automatic `POST /_blazor/refresh` requests return HTTP 200 with the browser's current cookie. No new WebSocket is created. The visible editor instance is a component-instance marker, not a SignalR connection ID; use the actual Network trace to substantiate the unchanged connection.
 
@@ -61,7 +62,9 @@ For a technical close-up, filter Network for `_blazor`: the existing WebSocket r
 
 **What this does not promise:** a role change in an external database does not automatically rewrite a cookie or reach every session promptly. The application must obtain updated credentials or revalidate authorization data. This walkthrough demonstrates applying those updated credentials without losing the connection or unsaved work, not automatic role synchronization or instant revocation.
 
-Static pages retain the normal cookie lifetime. Live connections still use `CloseOnAuthenticationExpiration`: browser or OS suspension can interrupt a circuit if refresh cannot run, even while its sign-in cookie remains valid. Session records live only in the API process and are removed on sign-out or replacement; after restarting the API, sign in normally again.
+Static pages retain the normal cookie lifetime. Live connections still use `CloseOnAuthenticationExpiration`: browser or OS suspension can interrupt a circuit if refresh cannot run, even while its sign-in cookie remains valid. The existing demo permission records are stored in SQLite, so restarting the service does not invalidate otherwise valid sign-in cookies. Sign-out or a new sign-in deletes the prior record, and expired records cannot be renewed.
+
+ASP.NET Core still issues, protects, authenticates, renews, and expires the cookies. `DemoPermissions` contains only the existing session identifier, refund-approval flag, and expiration aligned with the cookie lifetime. It is demo-specific authorization data, not a hand-written cookie handler, HTTP session provider, account system, or replacement for Identity. Keep the SQLite database and Data Protection keys/application name unchanged for the local restart walkthrough.
 
 This is **cookie authentication**, not ASP.NET Core Identity or an OAuth access-token acquisition demo. There is no Identity security-stamp check or claim that Identity templates automatically configure permission revalidation.
 
@@ -102,7 +105,7 @@ The web host retains thin forwarding routes for the existing API-workspace page 
 
 Configure an existing Foundry resource endpoint and deployed model in the AppHost's user secrets. Use the resource's root URL, not a project URL or a URL ending in `openai/v1/`; that suffix is added by the application. Authenticate using an Azure identity with inference access to that resource (`DefaultAzureCredential` is used; no API key is needed). Requests may incur model charges.
 
-The agentic AppHost has its own user-secrets ID so its settings do not affect the other eShop checkout. User secrets are stored outside the repository, not in `launchSettings.json` or `appsettings.json`; never commit real resource settings or credentials. The Foundry endpoint is exposed to Aspire as a secret parameter. User secrets are a local development store, not an encrypted production vault.
+User secrets are stored outside the repository, not in `launchSettings.json` or `appsettings.json`; never commit real resource settings or credentials. The AppHost retains the agentic branch's user-secrets ID so existing model configuration still works after merging. The Foundry endpoint is exposed to Aspire as a secret parameter. User secrets are a local development store, not an encrypted production vault.
 
 ```powershell
 dotnet user-secrets set "Parameters:agentic-foundry-endpoint" "https://<resource>.services.ai.azure.com/" --project eShopCustomerService.AppHost
@@ -115,14 +118,16 @@ aspire wait customerservice --non-interactive
 aspire describe --non-interactive
 ```
 
-Use isolated mode when other eShop checkouts are running. Discover this instance's HTTPS address through Aspire, enter its demo workspace, and use **Reset demo data** in its overview before rehearsing. Each worktree has its own database. The AppHost uses the distinct `eShop.CustomerService.Agentic` cookie so localhost demo sessions do not collide. Stop only this worktree's AppHost before rebuilding. Foundry is always declared, and its endpoint is a required Aspire parameter; missing configuration no longer silently disables the agent.
+Configuring `Parameters:agentic-foundry-endpoint` enables the agent resources automatically. With no endpoint configured, Aspire starts only **api**, **customerservice**, and **crossorigin**, and the ordinary editor remains available. Set `Agentic:Enabled` to `false` in AppHost configuration (or `$env:Agentic__Enabled = "false"` before starting) to run without AI even when endpoint secrets exist. Explicitly enabling the agent requires a Foundry endpoint.
+
+Use isolated mode when other eShop checkouts are running. Discover this instance's HTTPS address through Aspire, enter its demo workspace, and use **Reset demo data** in its overview before rehearsing. Each worktree has its own database. The AppHost uses the `eShop.CustomerService.Agentic` cookie, distinct from older checkouts; two instances of this merged app still share that cookie name on localhost, so use separate browser profiles when running them simultaneously. Stop only this worktree's AppHost before rebuilding.
 
 For a Visual Studio launch, configure the user secrets once, set `eShopCustomerService.AppHost` as the startup project, select the **https** profile, and press **F5**. The dashboard should show **customerservice**, **agentserver**, **api**, **crossorigin**, and the **foundry** external service. Use the HTTPS `customerservice` link from that dashboard rather than a URL from a previous CLI run.
 
 1. Open the existing resolution editor at `/returns/48024`. Select **Investigate** and show incremental rendering, the formatted Markdown recommendation, and the backend evidence card: the original model has no stock; the compatible upgrade has 12 units.
 2. Choose **Refund** or **Replacement**, select a replacement model if appropriate, edit the address, and type directly into **Customer reply**. Alternatively ask the agent to change these fields. Both use the same editor state; nothing needs saving.
 3. Ask: `Preview a warmer customer reply that mentions Taylor's workshop and includes the current delivery address. Change only the reply text; do not confirm a resolution.` The reply editor shows a predictive preview using your latest address. Select **Discard reply edits** to restore the previous text. Alternatively, **Accept reply edits** keeps the revised text in this page's workspace. Neither choice sends a message or allocates stock.
-4. Select **Show review**, even if you have not used the agent before. The ordinary frontend tool `show_resolution_review` automatically opens a read-only review of the current editor values and returns its result through AG-UI. The normal editor's **Review replacement** / **Review refund** buttons also open this current-state review without saving. A generated `ResolutionReviewBlock : FunctionInvocationContentBlock` renders the frontend tool call and result; no extra user action is required to execute it. Close the review and wait for **Ready**. Reviewing does not authorize confirmation.
+4. Select **Show review**, even if you have not used the agent before. The ordinary frontend tool `show_resolution_review` automatically opens a read-only review of the current editor values and returns its result through AG-UI. A generated `ResolutionReviewBlock : FunctionInvocationContentBlock` renders the frontend tool call and result; no extra user action is required to execute it. Close the review and wait for **Ready**. Reviewing does not authorize confirmation. The editor's separate **Review replacement** / **Review refund** buttons retain the traditional saved-draft review page for the HTTP/form and CSRF walkthrough; they do not call the agent.
 5. Select **Request approval**, inspect the exact current resolution details, and select **Approve resolution** once. The server revalidates the authenticated representative, selected case, approved values, refund permission if applicable, and stock for replacements, then atomically records the resolution and audit without creating a saved draft. Show the confirmed resolution and refreshed audit history on the same page. A replacement allocates exactly one unit locally; a refund allocates no stock.
 6. End the agent conversation after approval. The reply remains visible and unsent. Do not demonstrate reject-then-retry or send another agent turn after an approval decision while the AG-UI SDK [approval-history issue #3364](https://github.com/ag-ui-protocol/ag-ui/issues/3364) remains unresolved.
 
@@ -130,7 +135,9 @@ Complete the frontend review before requesting approval in the same conversation
 
 After a rejected confirmation, the agent's continuation disables further tool calls so it acknowledges the decision without retrying or changing the editor. This does not fix the separate SDK approval-history issue: start a fresh conversation for any later action.
 
-Rich text uses Markdig with a small mapper into the components' `RichTextContent` nodes. Original Markdown stays in history; paragraphs, headings, lists, emphasis, and code are formatted. Unsupported syntax stays literal, including raw HTML. Reply previews use the components' `SetPredictiveState`, `AcceptPredictiveState`, and `RejectPredictiveState` APIs, not a second copy of the reply or a custom rollback system. Reply text is page-local and unsent, including accepted edits. Frontend review and reply editing need no JavaScript; the small collocated JS module only follows transcript output while the representative is reading at the bottom.
+Agent-enabled return pages disable hidden-tab Auto Pause through `ConfigureBrowser`, because the agent conversation and pending approval are not persisted with the editor. Switching to source or slides must not silently replace that conversation. Non-AI return pages and the service queue retain the app-wide Auto Pause policy. Explicit server-requested pause and process replacement still end an agent conversation; start a fresh conversation afterward.
+
+Rich text uses Markdig with a small mapper into the components' `RichTextContent` nodes. Original Markdown stays in history; paragraphs, headings, lists, emphasis, and code are formatted. Unsupported syntax stays literal, including raw HTML. Reply previews use the components' `SetPredictiveState`, `AcceptPredictiveState`, and `RejectPredictiveState` APIs, not a custom rollback system. Committed editor values, including accepted reply text, participate in component persistence; an unaccepted predictive preview is not persisted as an accepted edit. Reply text remains unsent. Frontend review and reply editing need no JavaScript; the small collocated JS module only follows transcript output while the representative is reading at the bottom.
 
 **Boundaries:** carrier activity and all customer data are seeded; there are no real carrier calls, shipments, emails, or payments. Confirmation persistence and inventory allocation are real local operations. The independent traditional HTTP/form demos retain their existing saved-draft APIs; the agent workflow does not use them. The approval UI is not authorization: each AG-UI request revalidates the current representative, and tools derive their actor and selected case from the authenticated HTTP request. MAF's in-memory session store retains the genuine pending approval for continuation, partitioned by the authenticated demo session and selected case; do not replace it with the no-op store or disable approval binding. Workspace state synchronizes at request boundaries, not between browsers. Conversation and pending approvals are page-local and do not survive reloads or restarts. Foundry supplies model inference; this demo does not deploy a Foundry Hosted Agent or implement an AG-UI-to-Invocations bridge. Experimental warnings remain visible.
 
@@ -145,7 +152,7 @@ Rich text uses Markdig with a small mapper into the components' `RichTextContent
 | Blazor validation, pending state, and typed union construction | `eShopCustomerService.Web\Components\Shared\ResolutionEditor.razor` |
 | Typed union rendering | `eShopCustomerService.Web\Components\Shared\ResolutionSummary.razor` |
 | Business Minimal APIs and `AddValidation` | `eShopCustomerService.Api\Endpoints\ReturnEndpoints.cs`, `eShopCustomerService.Api\Program.cs` |
-| Protected browser form confirmation | `eShopCustomerService.Web\Program.cs` |
+| Protected browser form confirmation and app-wide Auto Pause | `eShopCustomerService.Web\Program.cs` |
 | Atomic confirmation and audit history | `eShopCustomerService.Api\Data\ReturnStore.cs` |
 | Independent-origin browser form | `eShopCustomerService.CrossOrigin\Program.cs` |
 | Demo-session authority and permission revalidation | `eShopCustomerService.Api\Services\DemoAuthentication.cs` |
@@ -164,8 +171,35 @@ Rich text uses Markdig with a small mapper into the components' `RichTextContent
 | Current workspace state carried into each agent request | `eShopCustomerService.AgentServer\Agentic\CaseStateAgent.cs` |
 | Authenticated server-to-server AG-UI transport | `eShopCustomerService.Web\Agentic\AgentConnection.cs` |
 | Blazor data access through the shared application API | `eShopCustomerService.Web\Services\WorkspaceService.cs`, `eShopCustomerService.Web\Services\CustomerServiceClient.cs` |
+| Static customer care, validation, TempData, and HTTP session | `eShopCustomerService.Web\Components\Pages\Care` |
+| Public cached QuickGrid region | `eShopCustomerService.Web\Components\Shared\CustomerHelpLibrary.razor` |
+| Persistent customer context and conditional loading | `eShopCustomerService.Web\Components\Pages\ReturnDetails.razor` |
+| Persistent unsaved resolution state | `eShopCustomerService.Web\Components\Shared\ResolutionWorkspace.razor`, `eShopCustomerService.Contracts\CaseWorkspaceState.cs` |
+| Connected-circuit tracking, server-requested pause, and bounded shutdown | `eShopCustomerService.Web\Services\CircuitMonitor.cs` |
 
 Inventory lookup includes a configurable 650 ms presentation delay (`Demo:ValidationDelayMilliseconds`). Availability still comes from SQLite. Validation faults do not count as successful checks. Confirmation always rechecks the business invariants inside its transaction.
+
+## Server-rendering walkthrough
+
+The customer journey and representative workflow are part of the same `customerservice` resource in the existing AppHost. No additional demo web application is needed.
+
+Run this walkthrough without AI (`Agentic:Enabled=false`) so return pages use the accelerated hidden-tab Auto Pause policy.
+
+1. Enter the representative workspace and reset demo data. Close interactive return tabs, select **Sign out**, and open `/care` in the same browser window. Stay signed out throughout the customer-care walkthrough, because the default output-cache policy bypasses authenticated responses. A separate browser profile or InPrivate window isn't needed.
+2. Explore `/care/help`. Enhanced navigation preserves the document; QuickGrid sorting and pagination use query-string links without a circuit. The public help region is cached for two minutes, while the outer request timestamp changes. `/care/policy` uses a one-minute public output-cache policy.
+3. On `/care/request`, submit Alex Morgan's request for the featured fictional order 48021. Client-side validation rejects invalid input without a POST; the server independently validates accepted submissions. The request is stored in SQLite and updates the very same return's reason, contact details, and audit history.
+4. On `/care/received`, refresh once: the TempData thank-you message disappears, while HTTP session retains the receipt reference. The session cache is process-local; the durable request itself remains in SQLite.
+5. In the same tab, select **Sign in**, then **Enter demo workspace**, and open the existing case page, `/returns/48021`. Briefly point out Alex's submitted reason and email. Show `[PersistentState]` on `Context` and the conditional load in `ReturnDetails.razor`. Place Aspire's resource logs beside the visible workspace, clear the displayed logs, filter to `Resolution context load`, and fully reload the same URL. Wait for the editor to become interactive: one context load serves prerendering and activation. Without persistence, the separate component instances would each load the context. Explain that baseline; no live code edit, rebuild, or restart is needed.
+6. Demonstrate resilience on the same `/returns/48021` page. Select **Replacement**, choose USB-C Dock Pro+, enter `200 Demo Way`, and move focus out of the address field so the edits reach the server. Don't select **Review replacement**. Keep the workspace visible and watch Aspire's built-in connected/active circuit metrics in a side-by-side window, so the hidden-tab Auto Pause timer does not run. In the workspace tab's DevTools Network throttling dropdown, select **Offline**. Observe disconnected, then evicted. Once active circuits reaches zero, restore **No throttling** on the workspace tab. Allow recovery, or select **Retry** if automatic retries have ended. The unsaved selection and address remain without refreshing or restarting the process.
+7. Demonstrate graceful deployment with the same unsaved replacement. Show the confirmed static form and `Response.OnCompleted` shutdown handler in `Operations.razor`, then the shutdown callback and bounded pause loop in `CircuitMonitor.cs`. Keep source beside the visible workspace. Immediately switch to `/operations`, select the confirmation checkbox, and select **Stop this service gracefully** before the eight-second Auto Pause timer fires. Show **Requested 1 pauses; 0 connections remain** in Aspire logs and the service stopping. Restart only **customerservice** in Aspire, or run `aspire resource customerservice restart`, leaving the AppHost running. Refresh Operations to show the new process ID, then resume the original workspace tab without refreshing it. The unsaved values and sign-in survive.
+8. For proactive resource management, stay on `/returns/48021`. Confirm USB-C Dock Pro+ and `200 Demo Way`, click the editor heading to leave the address field, and wait for validation. Show `[PersistentState]` on `Draft` in `ResolutionWorkspace.razor`, the shared state owner. Its stable holder persists the latest immutable editor state in `Value`, not an unaccepted reply preview. Leave the unsaved form open; don't select **Review replacement**, which saves a database draft.
+9. Switch to Aspire Metrics in another tab of the same window, hiding the editor. The app-wide eight-second hidden-tab policy releases the live circuit; allow for telemetry refresh. Returning restores the editable model and address automatically. No manual pause/resume commands are needed.
+
+For presentation pacing, `Program.cs` sets disconnected-circuit retention to ten seconds instead of the framework's default three minutes. Network-loss detection takes additional time: wait for Aspire's active-circuit metric to reach zero rather than timing from the Offline selection. A short interruption reconnects to the retained circuit. Before eviction after a longer interruption, Blazor persists selected application state on the server and can restore it into a new circuit. This capability is available in .NET 10. The default recovery cache is process-local; this does not protect against a server crash or capture edits that haven't reached the server. The later cooperative pause demos use a protected browser-held snapshot instead.
+
+`Program.cs` enables Auto Pause app-wide with `WithBrowserOptions(options => options.AddAutoPause(...))`; no query parameter is needed. The hidden-tab delay is shortened from the two-minute default to eight seconds for demonstration pacing. Keep the workspace visible while checking logs, permissions, or metrics in the other demonstrations; a side-by-side window prevents an unintended hidden-tab pause. This can also affect the authentication-refresh and virtualization demonstrations: transient UI state may reset when their interactive workspace pauses. Operations is a static Blazor page with a confirmed, server-handled shutdown form and requires representative authorization; it does not open a circuit or poll metrics. Its process ID is rendered on each page request. Before demonstrating circuit counts, start with a fresh workspace and verify one connected and one active circuit in Aspire; don't count retained circuits from earlier navigations as part of the demonstration. Close other live tabs before the process-replacement walkthrough, because shutdown requests pause for all connected circuits in this process.
+
+The shutdown callback waits for cooperative pause with a bounded budget before the web server tears down connections. This is a local application-side demonstration, not a production traffic-draining deployment orchestrator. A crash, expired/incompatible recovery state, or full refresh can lose unsaved browser-held work. Durable saving, shared Data Protection, and multi-instance storage design are separate concerns.
 
 ## Verification
 
@@ -177,9 +211,11 @@ dotnet format eShopCustomerService.sln --verify-no-changes
 
 Stop Aspire before building or formatting to release its resource assemblies. Integration tests use isolated temporary databases and cover union contracts, live OpenAPI generation, asynchronous API validation, authentication, rejected cross-origin forms, idempotent confirmation, stock races, rollback, persistence, reset, and permission enforcement with stale demo cookies.
 
+For browser verification, rehearse the walkthrough above with no other live demo circuits. Check the customer handoff, one-load prerendering, disconnected-circuit recovery, graceful service replacement, and hidden-tab pause/resume. Restore **No throttling** after the interruption demo. Reset the fictional demo data and use a fresh browser window before presenting.
+
 ## Deliberate boundaries
 
-The local seeded sign-in is **not production authentication**. Order and draft APIs, confirmation, and reset retain the representative policy and derive audit actors from that principal. Only the two fixed union examples, the validation-only endpoint, and the OpenAPI document are anonymous for the HTTP-file demonstration. All hosts remain Development-only. The sample does not implement a production identity provider, per-customer authorization, real payment processing, or fulfillment.
+The local seeded sign-in is **not production authentication**. Order and draft APIs, confirmation, and reset retain the representative policy and derive audit actors from that principal. The fixed union examples, validation-only endpoint, OpenAPI document, customer-care pages, and sample customer-request endpoint are anonymous. Customer requests concern only the featured fictional purchase, not an unrestricted public customer/order lookup. All hosts remain Development-only. The sample does not implement a production identity provider, per-customer authorization, real payment processing, or fulfillment.
 
 The form endpoint relies on .NET 11's automatic CSRF protection without opting out or layering an antiforgery-token requirement over this demonstration. It binds a scalar draft ID, not a union-valued form field. Automatic form protection is not a security guarantee for JSON-only APIs. Workflow APIs still require authentication, authorization, validation, and authoritative business rules; the anonymous validation example only checks a request and cannot commit a business operation.
 

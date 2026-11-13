@@ -15,7 +15,9 @@ Create routable pages in `Components/Pages` and shared components in `Components
 
 ## Data access
 
-Components and Minimal APIs use the same domain services and SQLite store. API and UI validation must share the same model and async rule. The inventory availability check never substitutes for transactional allocation at commit time.
+The application API owns SQLite and the business rules. Blazor components use `WorkspaceService`/`CustomerServiceClient`; agent tools call that same API. Shared contracts and the async validation rule live in `eShopCustomerService.Contracts`. The inventory availability check never substitutes for transactional allocation at commit time.
+
+`ResolutionWorkspace` owns the shared editor state and persists accepted editor values with `[PersistentState]`. Keep the persistent holder stable and update its `Value`; cascading persistence updates can otherwise reapply an older immutable record. Do not add a second draft-state model in the child editor or persist unaccepted predictive replies. Ordinary Review buttons use the saved-draft/form workflow; the agent's Show review tool displays current values without saving.
 
 ## Environment constraints
 

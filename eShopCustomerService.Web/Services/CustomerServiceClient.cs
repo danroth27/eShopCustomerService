@@ -37,8 +37,9 @@ public sealed class CustomerServiceClient(
         if (user.Identity?.IsAuthenticated == true)
         {
             var options = cookieOptions.Get(CookieAuthenticationDefaults.AuthenticationScheme);
+            var now = (options.TimeProvider ?? TimeProvider.System).GetUtcNow();
             var ticket = new AuthenticationTicket(user,
-                new AuthenticationProperties { ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes(30) },
+                new AuthenticationProperties { IssuedUtc = now, ExpiresUtc = now + options.ExpireTimeSpan },
                 CookieAuthenticationDefaults.AuthenticationScheme);
             message.Headers.Add("Cookie", $"{options.Cookie.Name}={options.TicketDataFormat.Protect(ticket)}");
         }
@@ -79,6 +80,13 @@ public sealed class CustomerServiceClient(
         using var response = await SendAsync(HttpMethod.Post, "/api/demo/reset", user,
             new ResetDemoRequest { Confirmation = "RESET" }, ct);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task<ResolutionResult<CustomerRequestReceipt>> SubmitCustomerRequestAsync(
+        CustomerReturnRequest request, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Post, "/api/customer-requests", new ClaimsPrincipal(), request, ct);
+        return await ReadOutcomeAsync<CustomerRequestReceipt>(response, ct);
     }
 
     public async Task<IReadOnlyList<ReturnCase>> GetCasesAsync(ClaimsPrincipal user, CancellationToken ct) =>

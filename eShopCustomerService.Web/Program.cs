@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using eShopCustomerService.Web.Agentic;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Server.Circuits;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,7 +20,11 @@ if (!builder.Environment.IsDevelopment())
 
 builder.AddServiceDefaults();
 builder.Services.AddDataProtection().SetApplicationName("eShop.CustomerService.Agentic");
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
+{
+    // Shorten the default three-minute retention to make disconnected recovery visible in the demo.
+    options.DisconnectedCircuitRetentionPeriod = TimeSpan.FromSeconds(10);
+});
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddSingleton<DemoAuthentication>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
@@ -56,12 +62,28 @@ builder.Services.AddCustomerServiceValidation();
 builder.Services.AddProblemDetails();
 CustomerServiceClient.AddServices(builder.Services, builder.Configuration);
 builder.Services.AddCustomerServiceAgent(builder.Configuration);
+builder.Services.AddScoped<ResolutionContextLoader>();
+builder.Services.AddSingleton<CircuitMonitor>();
+builder.Services.AddScoped<CircuitHandler, CustomerServiceCircuitHandler>();
+builder.Services.AddDistributedMemoryCache();
+builder.Services.AddSession(options =>
+{
+    options.Cookie.Name = "eShop.CustomerCare.Session";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+    options.IdleTimeout = TimeSpan.FromMinutes(30);
+});
+builder.Services.AddOutputCache(options => options.AddPolicy("PublicHelp",
+    policy => policy.Expire(TimeSpan.FromMinutes(1))));
+builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(30));
 
 var app = builder.Build();
 app.UseExceptionHandler();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapApiForwarding();
+app.UseSession();
+app.UseOutputCache();
 app.MapStaticAssets();
 app.MapDefaultEndpoints();
 
@@ -124,7 +146,9 @@ app.MapRazorComponents<App>().AddInteractiveServerRenderMode(options =>
     {
         connection.CloseOnAuthenticationExpiration = true;
         connection.MaximumAuthenticationExpiration = TimeSpan.FromSeconds(20);
-    });
+    })
+    .WithBrowserOptions(options =>
+        options.AddAutoPause(pause => pause.HiddenDelay = TimeSpan.FromSeconds(8)));
 
 app.Run();
 

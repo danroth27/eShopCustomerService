@@ -1,0 +1,54 @@
+@page "/operations"
+@attribute [Authorize(Policy = "CustomerService")]
+@inject IHostApplicationLifetime Lifetime
+
+<PageTitle>Service operations | eShop</PageTitle>
+<div class="page-heading"><div><span class="eyebrow">SERVICE OPERATIONS</span><h1>Deploy gracefully. Keep the work.</h1><p>This static Blazor page stops the service without opening its own circuit. Use Aspire for metrics and logs.</p></div></div>
+<section class="panel">
+    <p>Process ID: <strong>@Environment.ProcessId</strong></p>
+    @if (stopping)
+    {
+        <p class="notice" role="status">Stopping this service. Restart customerservice in Aspire.</p>
+    }
+    else
+    {
+        <form class="shutdown-form" method="post" @onsubmit="StopService" @formname="stop-service" data-enhance="true">
+            <AntiforgeryToken />
+            <label><input type="checkbox" name="ConfirmShutdown" value="true" checked="@ConfirmShutdown" required /> I understand this will pause connected workspaces and stop this service.</label>
+            <button class="button secondary" type="submit">Stop this service gracefully</button>
+        </form>
+        @if (failure is not null)
+        {
+            <p class="notice error" role="alert">@failure</p>
+        }
+    }
+    <p>After stopping, restart <strong>customerservice</strong> in the Aspire dashboard, then resume the original workspace tab. Keep that tab open: a full refresh discards browser-held recovery state.</p>
+    <a href="/returns/48021">Open Alex's resolution workspace</a>
+</section>
+
+@code {
+    [CascadingParameter]
+    public HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm(FormName = "stop-service")]
+    private bool ConfirmShutdown { get; set; }
+
+    private bool stopping;
+    private string? failure;
+
+    private void StopService()
+    {
+        if (!ConfirmShutdown)
+        {
+            failure = "Confirm that you want to stop this service.";
+            return;
+        }
+
+        stopping = true;
+        HttpContext.Response.OnCompleted(() =>
+        {
+            Lifetime.StopApplication();
+            return Task.CompletedTask;
+        });
+    }
+}
