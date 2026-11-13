@@ -1,0 +1,115 @@
+@using Microsoft.AspNetCore.Components.AI
+@using eShopCustomerService.Contracts
+@using eShopCustomerService.Web.Agentic
+
+<BlockRenderer TBlock="CaseContextBlock" Context="block">
+    <div class="agent-tool-card">
+        <div class="agent-tool-title"><Icon Name="return" /><strong>@(block.HasResult ? "Case evidence retrieved" : "Checking order, history, and stock...")</strong></div>
+        @if (block.CaseInfo is { } evidence)
+        {
+            <div class="agent-tool-facts">
+                <div><span>Order</span><strong>@evidence.Order.OrderId</strong></div>
+                <div><span>Original model</span><strong>@(evidence.Inventory.First(i => i.ProductCode == evidence.Order.ProductCode).Available) available</strong></div>
+                <div><span>Compatible upgrade</span><strong>@(evidence.Inventory.First(i => i.ProductCode == "DOCK-PRO-PLUS").Available) available</strong></div>
+            </div>
+            @foreach (var entry in evidence.Activity.Take(3))
+            {
+                <div class="agent-evidence-line" @key="entry.Id">@entry.Action</div>
+            }
+        }
+    </div>
+</BlockRenderer>
+<BlockRenderer TBlock="ResolutionEditorBlock" Context="block">
+    <div class="agent-tool-card">
+        <div class="agent-tool-title"><Icon Name="grid" /><strong>@(block.HasResult ? "Resolution editor updated" : "Updating the resolution editor...")</strong></div>
+        <p>These are the same fields you can edit directly. No resolution was confirmed.</p>
+    </div>
+</BlockRenderer>
+<BlockRenderer TBlock="UIActionBlock" Context="action" When="@(block => block.ToolName == "propose_customer_reply")">
+    <div class="agent-tool-card">
+        <div class="agent-tool-title"><Icon Name="grid" /><strong>Review reply edits</strong></div>
+        @if (action.IsComplete)
+        {
+            <p>@action.Result?.Result</p>
+        }
+        else if (Agent.State.HasPendingPredictiveState)
+        {
+            <p>The proposed text is in the reply editor. Accepting edits does not send the reply or confirm the resolution.</p>
+            <div class="agent-approval-actions">
+                <button class="button secondary" disabled="@_reviewingReply" @onclick="() => ReviewReplyAsync(action, false)">Discard reply edits</button>
+                <button class="button" disabled="@_reviewingReply" @onclick="() => ReviewReplyAsync(action, true)">Accept reply edits</button>
+            </div>
+        }
+        else
+        {
+            <p>This reply preview is no longer pending.</p>
+        }
+    </div>
+</BlockRenderer>
+<BlockRenderer TBlock="ResolutionReviewBlock" Context="block">
+    <div class="agent-tool-card">
+        <div class="agent-tool-title"><Icon Name="grid" /><strong>Frontend tool: resolution review</strong></div>
+        @if (block.HasResult)
+        {
+            <p>@block.Confirmation</p>
+        }
+        else
+        {
+            <p>Opening the current editor values in the Blazor UI. No confirmation authorized.</p>
+        }
+    </div>
+</BlockRenderer>
+<BlockRenderer TBlock="FunctionApprovalBlock" Context="block">
+    <div class="agent-approval">
+        <span class="eyebrow">YOUR DECISION</span><h3>Confirm this resolution?</h3>
+        <p>Approval records the reviewed resolution locally. No real payment, shipment, or customer reply is sent.</p>
+        <dl>
+            @if (block.Arguments is { } arguments)
+            {
+                @foreach (var argument in arguments.Where(a =>
+                    (Agent.State.Value.ResolutionKind == "refund"
+                        ? a.Key is not ("productCode" or "deliveryAddress")
+                        : a.Key is not ("refundAmount" or "paymentReference"))))
+                {
+                    <dt>@(argument.Key switch { "productCode" => "Replacement", "deliveryAddress" => "Deliver to", "refundAmount" => "Refund amount", "paymentReference" => "Payment reference", "resolutionKind" => "Resolution", _ => argument.Key })</dt>
+                    <dd>@argument.Value</dd>
+                }
+            }
+        </dl>
+        @if (block.Status == ApprovalStatus.Pending)
+        {
+            <div class="agent-approval-actions">
+                <button class="button" @onclick="block.Approve">Approve resolution</button>
+                <button class="button secondary" @onclick="() => block.Reject()">Reject</button>
+            </div>
+        }
+        else
+        {
+            <strong>@(block.Status == ApprovalStatus.Approved ? "Approved" : "Rejected. No confirmation authorized.")</strong>
+        }
+    </div>
+</BlockRenderer>
+
+@code {
+    [Parameter, EditorRequired] public UIAgent<CaseWorkspaceState> Agent { get; set; } = default!;
+    private bool _reviewingReply;
+
+    private async Task ReviewReplyAsync(UIActionBlock action, bool accepted)
+    {
+        if (_reviewingReply || action.IsComplete)
+        {
+            return;
+        }
+        _reviewingReply = true;
+        try
+        {
+            action.Call.Arguments ??= new Dictionary<string, object?>();
+            action.Call.Arguments["accepted"] = accepted;
+            await action.InvokeAsync();
+        }
+        finally
+        {
+            _reviewingReply = false;
+        }
+    }
+}

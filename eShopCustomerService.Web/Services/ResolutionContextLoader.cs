@@ -1,10 +1,9 @@
-using eShopCustomerService.Web.Data;
-using eShopCustomerService.Web.Domain;
+using eShopCustomerService.Contracts.Domain;
 
 namespace eShopCustomerService.Web.Services;
 
 public sealed class ResolutionContextLoader(
-    ReturnStore store, IConfiguration configuration, ILogger<ResolutionContextLoader> logger)
+    WorkspaceService store, IConfiguration configuration, ILogger<ResolutionContextLoader> logger)
 {
     private int loads;
 

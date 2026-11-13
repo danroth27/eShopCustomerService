@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.Extensions.Validation;
 
-namespace eShopCustomerService.Web.Domain;
+namespace eShopCustomerService.Contracts.Domain;
 
 [ValidatableType]
 public sealed class CustomerReturnRequest

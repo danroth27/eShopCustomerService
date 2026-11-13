@@ -2,9 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using eShopCustomerService.Api.Data;
+using eShopCustomerService.Contracts.Domain;
 using System.Text.RegularExpressions;
-using eShopCustomerService.Web.Data;
-using eShopCustomerService.Web.Domain;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -144,7 +144,7 @@ public sealed class ReturnsTests
         using var factory = new DemoFactory();
         using var client = factory.Browser();
         await DemoFactory.SignInAsync(client);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var cases = await store.GetCasesAsync();
         var inventory = await store.GetInventoryAsync();
         var audit = await store.GetAuditAsync(48021);
@@ -173,7 +173,7 @@ public sealed class ReturnsTests
     {
         using var factory = new DemoFactory();
         using var client = factory.Browser();
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var initialReturn = await store.GetCaseAsync(48021);
         var initialInventory = await store.GetInventoryAsync();
         var initialAudit = await store.GetAuditAsync(48021);
@@ -228,7 +228,7 @@ public sealed class ReturnsTests
         await DemoFactory.SignInAsync(client);
         using var response = await client.PostAsync("/api/drafts", new StringContent(json, Encoding.UTF8, "application/json"));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         Assert.Equal("Open", (await store.GetCaseAsync(48021))!.Status);
         Assert.Equal(3, (await store.GetAuditAsync(48021)).Count);
     }
@@ -243,7 +243,7 @@ public sealed class ReturnsTests
         using var factory = new DemoFactory();
         using var client = factory.Browser();
         await DemoFactory.SignInAsync(client);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var cases = await store.GetCasesAsync();
         var inventory = await store.GetInventoryAsync();
         var audit = await store.GetAuditAsync(48021);
@@ -266,7 +266,7 @@ public sealed class ReturnsTests
         using var client = factory.Browser();
         await DemoFactory.SignInAsync(client);
         var draft = await CreateDraftAsync(client);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         Assert.IsType<ReturnCase>((await store.ConfirmAsync(draft.Id, "Test representative")).Value);
         var audit = await store.GetAuditAsync(48021);
         var inventory = await store.GetInventoryAsync();
@@ -283,7 +283,7 @@ public sealed class ReturnsTests
     public async Task Missing_drafts_return_a_not_found_failure()
     {
         using var factory = new DemoFactory();
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var result = await store.ConfirmAsync(Guid.NewGuid(), "Test representative");
         var failure = Assert.IsType<ResolutionFailure>(result.Value);
         Assert.Equal(ResolutionFailureKind.NotFound, failure.Kind);
@@ -302,7 +302,7 @@ public sealed class ReturnsTests
         request.Headers.Add("Origin", "https://localhost:7444");
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         Assert.Null((await store.GetDraftAsync(draft.Id))!.ConfirmedAt);
         Assert.Equal("Open", (await store.GetCaseAsync(48021))!.Status);
         Assert.Equal(12, (await store.GetInventoryAsync()).Single(p => p.ProductCode == "DOCK-PRO-PLUS").Available);
@@ -324,7 +324,7 @@ public sealed class ReturnsTests
             Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
             Assert.Equal("/returns/48021?completed=true", response.Headers.Location!.OriginalString);
         }
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         Assert.Equal("Resolved", (await store.GetCaseAsync(48021))!.Status);
         Assert.Equal(11, (await store.GetInventoryAsync()).Single(p => p.ProductCode == "DOCK-PRO-PLUS").Available);
         var confirmations = (await store.GetAuditAsync(48021)).Where(e => e.Action.StartsWith("Replacement confirmed", StringComparison.Ordinal)).ToArray();
@@ -340,7 +340,7 @@ public sealed class ReturnsTests
         await DemoFactory.SignInAsync(client);
         var draft = await CreateDraftAsync(client);
         await SetStockAsync(factory.DatabasePath, 0);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var result = await store.ConfirmAsync(draft.Id, "Test representative");
         var failure = Assert.IsType<ResolutionFailure>(result.Value);
         Assert.Equal(ResolutionFailureKind.Conflict, failure.Kind);
@@ -363,7 +363,7 @@ public sealed class ReturnsTests
         var first = await CreateDraftAsync(client);
         var second = await CreateDraftAsync(client, 48023);
         await SetStockAsync(factory.DatabasePath, 1);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var results = await Task.WhenAll(
             store.ConfirmAsync(first.Id, "Test representative"),
             store.ConfirmAsync(second.Id, "Test representative"));
@@ -384,7 +384,7 @@ public sealed class ReturnsTests
             {
                 using var client = first.Browser();
                 await DemoFactory.SignInAsync(client);
-                var store = first.Services.GetRequiredService<ReturnStore>();
+                var store = first.Api.Services.GetRequiredService<ReturnStore>();
                 var result = await store.SaveDraftAsync(new(48022, new Resolution(new RefundResolution(149m, "PAY-48022"))), "Test representative");
                 var draft = Assert.IsType<ResolutionDraft>(result.Value);
                 Assert.IsType<ReturnCase>((await store.ConfirmAsync(draft.Id, "Test representative")).Value);
@@ -392,7 +392,7 @@ public sealed class ReturnsTests
             using (var restarted = new DemoFactory(path, deleteOnDispose: false))
             {
                 using var client = restarted.Browser();
-                var item = await restarted.Services.GetRequiredService<ReturnStore>().GetCaseAsync(48022);
+                var item = await restarted.Api.Services.GetRequiredService<ReturnStore>().GetCaseAsync(48022);
                 Assert.Equal("Resolved", item!.Status);
                 Assert.IsType<RefundResolution>(item.Resolution!.Value.Value);
             }
@@ -419,7 +419,7 @@ public sealed class ReturnsTests
         untrusted.Headers.Add("Sec-Fetch-Site", "same-site");
         using var rejected = await client.SendAsync(untrusted);
         Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         Assert.NotNull(await store.GetDraftAsync(draft.Id));
         using var trusted = new HttpRequestMessage(HttpMethod.Post, "/demo/reset")
         {

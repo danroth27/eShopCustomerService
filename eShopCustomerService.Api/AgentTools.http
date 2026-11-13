@@ -1,0 +1,81 @@
+# Local developer requests, not part of the presentation.
+# Use the API's HTTPS address from Aspire. Sign in through the web app first.
+# Supply demoCookie in private HTTP-client settings; never save a cookie in this file.
+@host = https://localhost:7064
+@draftId = 00000000-0000-0000-0000-000000000000
+
+### Validate the current representative session.
+GET {{host}}/api/agent-tools/identity
+Cookie: {{demoCookie}}
+
+### Read selected-case evidence.
+GET {{host}}/api/agent-tools/returns/48024
+Cookie: {{demoCookie}}
+
+### Check availability through the same asynchronous inventory service used by validation.
+GET {{host}}/api/inventory/DOCK-PRO-PLUS/availability
+Cookie: {{demoCookie}}
+
+### Confirm the exact reviewed replacement directly, without a saved draft.
+# This deliberately allocates one unit locally when the details match.
+POST {{host}}/api/agent-tools/returns/48024/confirm
+Cookie: {{demoCookie}}
+Content-Type: application/json
+
+{
+  "productCode": "DOCK-PRO-PLUS",
+  "deliveryAddress": "200 Demo Way, Seattle, WA 98101"
+}
+
+### Confirm a draft through the ordinary application workflow.
+# Set draftId to a draft created through POST /api/drafts.
+POST {{host}}/api/resolutions/confirm
+Cookie: {{demoCookie}}
+Content-Type: application/json
+
+{
+  "draftId": "{{draftId}}"
+}
+
+### Missing selected case: 404.
+GET {{host}}/api/agent-tools/returns/99999
+Cookie: {{demoCookie}}
+
+### Start a fictional session. The web host normally issues its browser cookie.
+POST {{host}}/api/demo/sessions
+Content-Type: application/json
+
+{}
+
+### Change permission for the current local demo session.
+PUT {{host}}/api/demo/session/permission
+Cookie: {{demoCookie}}
+Content-Type: application/json
+
+{
+  "refundApproval": false
+}
+
+### Revoke the current local demo session.
+DELETE {{host}}/api/demo/session
+Cookie: {{demoCookie}}
+
+### Explicitly reset the local fictional orders, drafts, inventory, and audit history.
+POST {{host}}/api/demo/reset
+Cookie: {{demoCookie}}
+Content-Type: application/json
+
+{
+  "confirmation": "RESET"
+}
+
+### Submit an anonymous request for the featured fictional purchase only.
+POST {{host}}/api/customer-requests
+Content-Type: application/json
+
+{
+  "orderId": 48021,
+  "name": "Alex Morgan",
+  "email": "alex@example.com",
+  "message": "Both external displays disconnect. Please help me arrange a replacement."
+}

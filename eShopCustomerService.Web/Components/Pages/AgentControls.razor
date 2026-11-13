@@ -1,0 +1,39 @@
+@using Microsoft.AspNetCore.Components.AI
+@implements IDisposable
+
+<div class="agent-prompt-actions">
+    <button class="button secondary" disabled="@Busy" @onclick="Investigate">Investigate</button>
+    <button class="button secondary" disabled="@Busy" @onclick="Review">Show review</button>
+    <button class="button secondary" disabled="@Busy" @onclick="Confirm">Request approval</button>
+    @if (Context.Status == ConversationStatus.Streaming)
+    {
+        <button class="text-button" @onclick="Context.CancelAsync">Stop</button>
+    }
+</div>
+
+@code {
+    [CascadingParameter] private AgentContext Context { get; set; } = default!;
+    [Parameter] public EventCallback<ConversationStatus> StatusChanged { get; set; }
+    private IDisposable? _subscription;
+    private bool Busy => Context.Status is ConversationStatus.Streaming or ConversationStatus.AwaitingInput;
+    protected override void OnInitialized() => _subscription = Context.RegisterOnStatusChanged(Changed);
+    private Task Investigate() => Context.SendMessageAsync("Investigate this delayed delivery and recommend a resolution.");
+    private Task Review() => Context.SendMessageAsync("Show the current resolution editor in the resolution review UI. Use its current values, including my latest edits and customer reply. Do not confirm it.");
+    private Task Confirm() => Context.SendMessageAsync("Confirm the current resolution using the exact current editor values. Do not change my selected resolution or reply.");
+    private async void Changed(ConversationStatus status)
+    {
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                await StatusChanged.InvokeAsync(status);
+                StateHasChanged();
+            });
+        }
+        catch (Exception error)
+        {
+            await DispatchExceptionAsync(error);
+        }
+    }
+    public void Dispose() => _subscription?.Dispose();
+}

@@ -1,10 +1,10 @@
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Text.Json;
-using eShopCustomerService.Web.Domain;
+using eShopCustomerService.Contracts.Domain;
 using Microsoft.Data.Sqlite;
 
-namespace eShopCustomerService.Web.Data;
+namespace eShopCustomerService.Api.Data;
 
 public sealed class ReturnStore : IDisposable
 {
@@ -316,50 +316,90 @@ public sealed class ReturnStore : IDisposable
             {
                 return new(order);
             }
-            if (order.Status != "Open")
+            var result = await ApplyResolutionAsync(db, transaction, order, draft.Resolution, actor, ct);
+            if (result is ResolutionFailure)
             {
-                return new(new ResolutionFailure("A different resolution has already been confirmed for this return."));
+                return result;
             }
-            if (await ValidateResolutionAsync(db, transaction, order, draft.Resolution, ct) is { } failure)
-            {
-                return new(failure);
-            }
-
-            if (draft.Resolution.Value is ReplacementResolution replacement)
-            {
-                await using var allocation = db.CreateCommand();
-                allocation.Transaction = transaction;
-                allocation.CommandText = "UPDATE Inventory SET Available = Available - 1 WHERE ProductCode = $code AND Available > 0";
-                allocation.Parameters.AddWithValue("$code", replacement.ProductCode);
-                if (await allocation.ExecuteNonQueryAsync(ct) != 1)
-                {
-                    return new(new ResolutionFailure("Inventory changed. Choose an available replacement."));
-                }
-            }
-
-            var json = JsonSerializer.Serialize(draft.Resolution, JsonSerializerOptions.Web);
             await using var command = db.CreateCommand();
             command.Transaction = transaction;
-            command.CommandText = """
-                UPDATE Orders SET Status = 'Resolved', ResolutionJson = $json WHERE Id = $order;
-                UPDATE Drafts SET ConfirmedAt = $now WHERE Id = $id;
-                """;
-            command.Parameters.AddWithValue("$json", json);
-            command.Parameters.AddWithValue("$order", order.OrderId);
+            command.CommandText = "UPDATE Drafts SET ConfirmedAt = $now WHERE Id = $id";
             command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
             command.Parameters.AddWithValue("$id", id.ToString());
             await command.ExecuteNonQueryAsync(ct);
-            var action = draft.Resolution.Value is RefundResolution
-                ? "Simulated refund confirmed; no payment was issued"
-                : "Replacement confirmed and one unit allocated; no shipment was created";
-            await AddAuditAsync(db, transaction, order.OrderId, actor, action, ct);
             transaction.Commit();
-            return new(order with { Status = "Resolved", Resolution = draft.Resolution });
+            return result;
         }
         finally
         {
             writer.Release();
         }
+    }
+
+    public async Task<ResolutionResult<ReturnCase>> ConfirmResolutionAsync(
+        SaveResolutionRequest request, string actor, CancellationToken ct = default)
+    {
+        await writer.WaitAsync(ct);
+        try
+        {
+            await using var db = await OpenAsync(ct);
+            using var transaction = db.BeginTransaction();
+            var order = await FindCaseAsync(db, transaction, request.OrderId, ct);
+            if (order is null)
+            {
+                return new(new ResolutionFailure("The order was not found.", ResolutionFailureKind.NotFound));
+            }
+            if (order.Status == "Resolved" && Equals(order.Resolution?.Value, request.Resolution.Value))
+            {
+                return new(order);
+            }
+            var result = await ApplyResolutionAsync(db, transaction, order, request.Resolution, actor, ct);
+            if (result is ReturnCase)
+            {
+                transaction.Commit();
+            }
+            return result;
+        }
+        finally
+        {
+            writer.Release();
+        }
+    }
+
+    private static async Task<ResolutionResult<ReturnCase>> ApplyResolutionAsync(
+        SqliteConnection db, SqliteTransaction transaction, ReturnCase order,
+        Resolution resolution, string actor, CancellationToken ct)
+    {
+        if (order.Status != "Open")
+        {
+            return new(new ResolutionFailure("A different resolution has already been confirmed for this return."));
+        }
+        if (await ValidateResolutionAsync(db, transaction, order, resolution, ct) is { } failure)
+        {
+            return new(failure);
+        }
+        if (resolution.Value is ReplacementResolution replacement)
+        {
+            await using var allocation = db.CreateCommand();
+            allocation.Transaction = transaction;
+            allocation.CommandText = "UPDATE Inventory SET Available = Available - 1 WHERE ProductCode = $code AND Available > 0";
+            allocation.Parameters.AddWithValue("$code", replacement.ProductCode);
+            if (await allocation.ExecuteNonQueryAsync(ct) != 1)
+            {
+                return new(new ResolutionFailure("Inventory changed. Choose an available replacement."));
+            }
+        }
+        await using var command = db.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "UPDATE Orders SET Status = 'Resolved', ResolutionJson = $json WHERE Id = $order";
+        command.Parameters.AddWithValue("$json", JsonSerializer.Serialize(resolution, JsonSerializerOptions.Web));
+        command.Parameters.AddWithValue("$order", order.OrderId);
+        await command.ExecuteNonQueryAsync(ct);
+        var action = resolution.Value is RefundResolution
+            ? "Simulated refund confirmed; no payment was issued"
+            : "Replacement confirmed and one unit allocated; no shipment was created";
+        await AddAuditAsync(db, transaction, order.OrderId, actor, action, ct);
+        return new(order with { Status = "Resolved", Resolution = resolution });
     }
 
     public async Task ResetAsync(CancellationToken ct = default)
@@ -492,11 +532,16 @@ public sealed class ReturnStore : IDisposable
                 (48022, 'Jordan Lee', 'Contoso Studio', 'jordan@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
                  '75 Pine Street, Portland, OR 97204', 'Incorrect model ordered. Customer prefers a refund.'),
                 (48023, 'Sam Rivera', 'Fabrikam Labs', 'sam@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
-                 '220 Lake Avenue, Bellevue, WA 98004', 'Power adapter is not working. Replacement requested.');
+                 '220 Lake Avenue, Bellevue, WA 98004', 'Power adapter is not working. Replacement requested.'),
+                (48024, 'Taylor Chen', 'Adventure Works', 'taylor@example.com', 'USB-C Dock Pro', 'DOCK-PRO', 14900,
+                 '410 Cedar Street, Seattle, WA 98101', 'Delivery delayed. Tracking has not changed for five days. Customer needs a working dock for a workshop.');
             INSERT INTO Audit (OrderId, Actor, Action, Timestamp) VALUES
                 (48021, 'eShop Orders (seed)', 'Order delivered', '2026-10-22T09:30:00+00:00'),
                 (48021, 'Customer (seed)', 'Return requested: intermittent display connection', '2026-10-28T15:20:00+00:00'),
-                (48021, 'Customer service (seed)', 'Return approved within the 30-day policy', '2026-10-29T08:45:00+00:00');
+                (48021, 'Customer service (seed)', 'Return approved within the 30-day policy', '2026-10-29T08:45:00+00:00'),
+                (48024, 'eShop Orders (seed)', 'Order dispatched; tracking DEMO-48024', '2026-11-02T09:30:00+00:00'),
+                (48024, 'Carrier (seed)', 'Delayed at Seattle hub; no new scan for five days', '2026-11-03T10:00:00+00:00'),
+                (48024, 'Customer service (seed)', 'Replacement eligible under the seeded delayed-delivery policy', '2026-11-08T09:00:00+00:00');
             """;
         await command.ExecuteNonQueryAsync();
         transaction.Commit();

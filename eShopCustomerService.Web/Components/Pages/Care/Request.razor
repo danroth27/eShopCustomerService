@@ -1,5 +1,5 @@
 @page "/care/request"
-@inject ReturnStore Store
+@inject CustomerServiceClient Api
 @inject NavigationManager Navigation
 
 <PageTitle>Start a return | eShop</PageTitle>
@@ -52,7 +52,7 @@
     private async Task SubmitAsync()
     {
         Input!.OrderId = 48021;
-        var result = await Store.SubmitCustomerRequestAsync(Input!, HttpContext?.RequestAborted ?? default);
+        var result = await Api.SubmitCustomerRequestAsync(Input!, HttpContext?.RequestAborted ?? default);
         switch (result.Value)
         {
             case CustomerRequestReceipt receipt:

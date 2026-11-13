@@ -1,7 +1,8 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.RegularExpressions;
-using eShopCustomerService.Web.Data;
-using eShopCustomerService.Web.Domain;
+using eShopCustomerService.Api.Data;
+using eShopCustomerService.Contracts.Domain;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -9,6 +10,27 @@ namespace eShopCustomerService.Tests;
 
 public sealed class CustomerCareTests
 {
+    [Theory]
+    [InlineData(48022, "alex@example.com")]
+    [InlineData(48021, "not-an-email")]
+    public async Task Customer_request_api_rejects_other_orders_and_invalid_contact_details(int orderId, string email)
+    {
+        using var factory = new DemoFactory(DatabasePath());
+        using var client = factory.Api.CreateClient();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
+        var before = await store.GetCasesAsync();
+        using var response = await client.PostAsJsonAsync("/api/customer-requests", new CustomerReturnRequest
+        {
+            OrderId = orderId,
+            Name = "Alex Morgan",
+            Email = email,
+            Message = "Please arrange a compatible replacement."
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(before, await store.GetCasesAsync());
+        Assert.Equal(0, await RequestCountAsync(factory.DatabasePath));
+    }
+
     [Fact]
     public async Task Customer_request_persists_on_the_same_case_and_explicit_reset_clears_it()
     {
@@ -16,7 +38,7 @@ public sealed class CustomerCareTests
         CustomerRequestReceipt receipt;
         using (var factory = new DemoFactory(path, deleteOnDispose: false))
         {
-            var store = factory.Services.GetRequiredService<ReturnStore>();
+            var store = factory.Api.Services.GetRequiredService<ReturnStore>();
             var inventory = await store.GetInventoryAsync();
             var otherOrder = await store.GetCaseAsync(48022);
             var result = await store.SubmitCustomerRequestAsync(ValidRequest());
@@ -33,7 +55,7 @@ public sealed class CustomerCareTests
         }
 
         using var reopened = new DemoFactory(path);
-        var reopenedStore = reopened.Services.GetRequiredService<ReturnStore>();
+        var reopenedStore = reopened.Api.Services.GetRequiredService<ReturnStore>();
         Assert.Equal(ValidRequest().Message, (await reopenedStore.GetCaseAsync(receipt.OrderId))!.Reason);
         await using (var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
         {
@@ -58,7 +80,7 @@ public sealed class CustomerCareTests
         string name, string email, string message, int orderId, ResolutionFailureKind expected)
     {
         using var factory = new DemoFactory(DatabasePath());
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var cases = await store.GetCasesAsync();
         var audit = await store.GetAuditAsync(48021);
         var result = await store.SubmitCustomerRequestAsync(new()
@@ -78,7 +100,7 @@ public sealed class CustomerCareTests
     public async Task Customer_submission_cannot_reopen_a_resolved_order()
     {
         using var factory = new DemoFactory(DatabasePath());
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var draftResult = await store.SaveDraftAsync(new(48021, new Resolution(new RefundResolution(149, "PAY-48021"))), "Representative");
         var draft = Assert.IsType<ResolutionDraft>(draftResult.Value);
         var resolved = Assert.IsType<ReturnCase>((await store.ConfirmAsync(draft.Id, "Representative")).Value);
@@ -124,7 +146,7 @@ public sealed class CustomerCareTests
             Assert.Equal(HttpStatusCode.OK, article.StatusCode);
         }
 
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         var untouchedOrder = await store.GetCaseAsync(48022);
         var fields = new Dictionary<string, string>
         {

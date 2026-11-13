@@ -1,17 +1,15 @@
 using System.Security.Claims;
-using System.Diagnostics;
 using eShopCustomerService.Web.Components;
-using eShopCustomerService.Web.Data;
-using eShopCustomerService.Web.Domain;
+using eShopCustomerService.Contracts.Domain;
 using eShopCustomerService.Web.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
+using eShopCustomerService.Web.Agentic;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Server.Circuits;
-using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +19,7 @@ if (!builder.Environment.IsDevelopment())
 }
 
 builder.AddServiceDefaults();
+builder.Services.AddDataProtection().SetApplicationName("eShop.CustomerService.Agentic");
 builder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
 {
     // Shorten the default three-minute retention to make disconnected recovery visible in the demo.
@@ -31,7 +30,7 @@ builder.Services.AddSingleton<DemoAuthentication>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
 {
     options.LoginPath = "/sign-in";
-    options.Cookie.Name = "eShop.CustomerService.Demo";
+    options.Cookie.Name = builder.Configuration["Demo:CookieName"] ?? "eShop.CustomerService.Demo";
     options.Cookie.HttpOnly = true;
     options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
     options.Cookie.SameSite = SameSiteMode.Lax;
@@ -59,11 +58,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser().RequireRole("Representative").RequireClaim(DemoAuthentication.SessionClaim));
 });
 builder.Services.AddValidation();
-builder.Services.AddOpenApi();
+builder.Services.AddCustomerServiceValidation();
 builder.Services.AddProblemDetails();
-builder.Services.AddSingleton<ReturnStore>();
-builder.Services.AddSingleton<InventoryService>();
-builder.Services.AddSingleton<ResolutionContextLoader>();
+CustomerServiceClient.AddServices(builder.Services, builder.Configuration);
+builder.Services.AddCustomerServiceAgent(builder.Configuration);
+builder.Services.AddScoped<ResolutionContextLoader>();
 builder.Services.AddSingleton<CircuitMonitor>();
 builder.Services.AddScoped<CircuitHandler, CustomerServiceCircuitHandler>();
 builder.Services.AddDistributedMemoryCache();
@@ -76,13 +75,13 @@ builder.Services.AddSession(options =>
 });
 builder.Services.AddOutputCache(options => options.AddPolicy("PublicHelp",
     policy => policy.Expire(TimeSpan.FromMinutes(1))));
-builder.Services.AddDataProtection().SetApplicationName("eShopCustomerService.Web");
 builder.Services.Configure<HostOptions>(options => options.ShutdownTimeout = TimeSpan.FromSeconds(30));
 
 var app = builder.Build();
 app.UseExceptionHandler();
 app.UseAuthentication();
 app.UseAuthorization();
+app.MapApiForwarding();
 app.UseSession();
 app.UseOutputCache();
 app.MapStaticAssets();
@@ -109,27 +108,28 @@ app.MapPost("/demo/sign-out", async ([FromForm] string confirmation, HttpContext
     return TypedResults.LocalRedirect("/sign-in");
 }).RequireAuthorization("CustomerService").ExcludeFromDescription();
 
-app.MapPost("/demo/reset", async ([FromForm] string confirmation, ReturnStore store, CancellationToken ct) =>
+app.MapPost("/demo/reset", async (
+    [FromForm] string confirmation, CustomerServiceClient api, HttpContext context, CancellationToken ct) =>
 {
     if (confirmation != "RESET")
     {
         return Results.BadRequest("Reset requires the explicit RESET confirmation.");
     }
-    await store.ResetAsync(ct);
+    await api.ResetAsync(context.User, ct);
     return Results.LocalRedirect("/");
 }).RequireAuthorization("CustomerService").ExcludeFromDescription();
 
 app.MapPost("/returns/confirm", async (
-    [FromForm] Guid draftId, ReturnStore store, ClaimsPrincipal user, IAuthorizationService authorization,
+    [FromForm] Guid draftId, CustomerServiceClient api, ClaimsPrincipal user, IAuthorizationService authorization,
     ILogger<Program> logger, CancellationToken ct) =>
 {
-    var draft = await store.GetDraftAsync(draftId, ct);
+    var draft = await api.GetDraftAsync(draftId, user, ct);
     if (draft?.Resolution.Value is RefundResolution
         && !(await authorization.AuthorizeAsync(user, DemoAuthentication.RefundPolicy)).Succeeded)
     {
         return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "Refund approval is required.");
     }
-    var result = await store.ConfirmAsync(draftId, user.Identity!.Name!, ct);
+    var result = await api.ConfirmAsync(draftId, user, ct);
     if (result is ResolutionFailure rejected)
     {
         logger.LogWarning("Resolution confirmation rejected for draft {DraftId}: {Reason}", draftId, rejected.Message);
@@ -141,59 +141,6 @@ app.MapPost("/returns/confirm", async (
     };
 }).RequireAuthorization("CustomerService").ExcludeFromDescription();
 
-var api = app.MapGroup("/api");
-var protectedApi = api.MapGroup("").RequireAuthorization("CustomerService");
-protectedApi.MapGet("/returns", (ReturnStore store, CancellationToken ct) => store.GetCasesAsync(ct));
-protectedApi.MapGet("/returns/{orderId:int}", async (int orderId, ReturnStore store, CancellationToken ct) =>
-    await store.GetCaseAsync(orderId, ct) is { } result ? Results.Ok(result) : Results.NotFound())
-    .Produces<ReturnCase>().Produces(StatusCodes.Status404NotFound);
-protectedApi.MapGet("/returns/{orderId:int}/audit", (int orderId, ReturnStore store, CancellationToken ct) =>
-    store.GetAuditAsync(orderId, ct));
-protectedApi.MapGet("/inventory", (ReturnStore store, CancellationToken ct) => store.GetInventoryAsync(ct));
-protectedApi.MapGet("/drafts/{id:guid}", async (Guid id, ReturnStore store, CancellationToken ct) =>
-    await store.GetDraftAsync(id, ct) is { } draft ? Results.Ok(draft) : Results.NotFound())
-    .Produces<ResolutionDraft>().Produces(StatusCodes.Status404NotFound);
-protectedApi.MapPost("/drafts", async Task<Results<Created<ResolutionDraft>, ForbidHttpResult, ProblemHttpResult>> (
-    SaveResolutionRequest request, ReturnStore store, ClaimsPrincipal user,
-    IAuthorizationService authorization, ILogger<Program> logger, CancellationToken ct) =>
-{
-    if (request.Resolution.Value is RefundResolution
-        && !(await authorization.AuthorizeAsync(user, DemoAuthentication.RefundPolicy)).Succeeded)
-    {
-        return TypedResults.Forbid();
-    }
-    var result = await store.SaveDraftAsync(request, user.Identity!.Name!, ct);
-    if (result is ResolutionFailure rejected)
-    {
-        logger.LogWarning("Draft rejected for order {OrderId}: {Reason}", request.OrderId, rejected.Message);
-    }
-    return result switch
-    {
-        ResolutionDraft draft => TypedResults.Created($"/api/drafts/{draft.Id}", draft),
-        ResolutionFailure failure => TypedResults.Problem(
-            statusCode: failure.Kind switch
-            {
-                ResolutionFailureKind.Invalid => StatusCodes.Status400BadRequest,
-                ResolutionFailureKind.NotFound => StatusCodes.Status404NotFound,
-                ResolutionFailureKind.Conflict => StatusCodes.Status409Conflict,
-                _ => throw new UnreachableException()
-            },
-            title: "The operation could not be completed.", detail: failure.Message)
-    };
-}).ProducesProblem(StatusCodes.Status400BadRequest)
-    .ProducesProblem(StatusCodes.Status404NotFound)
-    .ProducesProblem(StatusCodes.Status409Conflict);
-
-// Minimal APIs + C# unions
-api.MapGet("/examples/refund", () => new Resolution(new RefundResolution(149m, "PAY-48021")));
-api.MapGet("/examples/replacement", () => new Resolution(new ReplacementResolution(
-    "DOCK-PRO-PLUS", "120 Market Street, Seattle, WA 98101")));
-
-// Minimal APIs + async validation
-api.MapPost("/replacements/validate", (ReplacementRequest request) =>
-    TypedResults.Ok(new { valid = true, message = "Replacement request passed asynchronous inventory validation." }));
-
-app.MapOpenApi();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode(options =>
     options.ConfigureConnection = connection =>
     {
@@ -203,7 +150,6 @@ app.MapRazorComponents<App>().AddInteractiveServerRenderMode(options =>
     .WithBrowserOptions(options =>
         options.AddAutoPause(pause => pause.HiddenDelay = TimeSpan.FromSeconds(8)));
 
-await app.Services.GetRequiredService<ReturnStore>().InitializeAsync();
 app.Run();
 
 public partial class Program;

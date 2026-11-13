@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace eShopCustomerService.Web.Domain;
+namespace eShopCustomerService.Contracts.Domain;
 
 [JsonUnion(TypeClassifier = typeof(JsonUnionTypeStructuralClassifier))]
 public union Resolution(RefundResolution, ReplacementResolution);

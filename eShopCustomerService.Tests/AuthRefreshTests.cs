@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
-using eShopCustomerService.Web.Data;
-using eShopCustomerService.Web.Domain;
+using eShopCustomerService.Api.Data;
+using eShopCustomerService.Contracts.Domain;
 using eShopCustomerService.Web.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -49,7 +49,7 @@ public sealed class AuthRefreshTests
         Assert.Equal(HttpStatusCode.Forbidden, rejectedDraft.StatusCode);
         using var rejectedConfirmation = await PostFormAsync(oldClient, "/returns/confirm", "draftId", draft.Id.ToString());
         Assert.Equal(HttpStatusCode.Forbidden, rejectedConfirmation.StatusCode);
-        var store = factory.Services.GetRequiredService<ReturnStore>();
+        var store = factory.Api.Services.GetRequiredService<ReturnStore>();
         Assert.Null((await store.GetDraftAsync(draft.Id))!.ConfirmedAt);
         Assert.Equal("Open", (await store.GetCaseAsync(48021))!.Status);
         Assert.Equal(4, (await store.GetAuditAsync(48021)).Count);

@@ -1,0 +1,25 @@
+@using eShopCustomerService.Contracts
+@using eShopCustomerService.Web.Agentic
+
+<section class="panel @(PreviewPending ? "agent-reply-preview" : "")">
+    <div class="panel-heading">
+        <div><span class="eyebrow">CUSTOMER REPLY / NOT SENT</span><h2>Draft the response together</h2></div>
+    </div>
+    <label class="small-label" for="customer-reply">Customer reply</label>
+    <textarea id="customer-reply" rows="7" value="@State.CustomerReply" @oninput="ChangeReplyAsync"
+              disabled="@(Disabled || State.Status == "Resolved" || !RendererInfo.IsInteractive)"
+              placeholder="Write a reply or ask the agent to help draft it."></textarea>
+    <p class="agent-hint">@(PreviewPending
+        ? "Review the proposed edits in the agent panel. Discard restores your previous text."
+        : "Your edits are shared with the agent on its next request. Nothing is sent to the customer.")</p>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public CaseWorkspaceState State { get; set; } = default!;
+    [Parameter] public EventCallback<CaseWorkspaceState> StateChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool PreviewPending { get; set; }
+
+    private Task ChangeReplyAsync(ChangeEventArgs args) =>
+        StateChanged.InvokeAsync(CaseWorkspaceUpdates.Edit(State, customerReply: args.Value?.ToString() ?? ""));
+}

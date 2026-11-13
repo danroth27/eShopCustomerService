@@ -4,14 +4,20 @@
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);OPENAI001;EXTEXP0001;MAAI001</WarningsNotAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.AI" Version="0.1.0-preview.1.26466.103" />
+    <PackageReference Include="AGUI.Client" Version="1.0.1" />
+    <PackageReference Include="Markdig" Version="1.5.1" />
     <PackageReference Include="Microsoft.AspNetCore.Components.QuickGrid" Version="11.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.Components.Server.AutoPause" Version="11.0.0" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
     <ProjectReference Include="..\eShopCustomerService.ServiceDefaults\eShopCustomerService.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\eShopCustomerService.Contracts\eShopCustomerService.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

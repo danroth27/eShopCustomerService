@@ -8,13 +8,18 @@
     <Nullable>enable</Nullable>
     <IsAspireHost>true</IsAspireHost>
     <AspireUseCliBundle>true</AspireUseCliBundle>
-    <UserSecretsId>3adb0b37-7a17-4704-9774-54fc35478dc3</UserSecretsId>
+    <UserSecretsId>717af709-c11b-47ec-8786-4168c2654c89</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.AppHost" Version="13.6.4" />
     <ProjectReference Include="..\eShopCustomerService.Web\eShopCustomerService.Web.csproj" />
     <ProjectReference Include="..\eShopCustomerService.CrossOrigin\eShopCustomerService.CrossOrigin.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\eShopCustomerService.AgentServer\eShopCustomerService.AgentServer.csproj" />
+    <ProjectReference Include="..\eShopCustomerService.Api\eShopCustomerService.Api.csproj" />
   </ItemGroup>
 
 </Project>
