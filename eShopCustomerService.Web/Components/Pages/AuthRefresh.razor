@@ -5,11 +5,10 @@
 
 <div class="page-heading">
     <div><span class="eyebrow">PRESENTER CONTROLS</span><h1>Keep permissions current.</h1>
-        <p>Change Taylor's refund approval permission while the return editor stays open in another tab.</p></div>
+        <p>Change Taylor's refund permission while keeping the return editor visible.</p></div>
 </div>
 <section class="panel auth-controls">
     <div class="panel-heading"><h2>Taylor Brooks</h2><span class="badge @(refundApproval ? "success" : "warning")">Refund approval: @(refundApproval ? "allowed" : "removed")</span></div>
-    <p>These controls issue updated credentials in this browser. Return to the existing editor without reloading; its next scheduled authentication refresh normally applies them within about 10 seconds in this sample.</p>
     <div class="api-actions">
         <form method="post" action="/demo/auth-refresh/permission">
             <input type="hidden" name="refundApproval" value="false" />
@@ -20,8 +19,8 @@
             <button class="button" type="submit">Restore refund approval</button>
         </form>
     </div>
-    <div class="notice subtle"><Icon Name="shield" /><span>These controls change the server-side demo permission and issue an updated cookie through HTTP. They do not update the open circuit directly.</span></div>
-    <p class="fine-print">Development-only, fictional session using a normal long-lived cookie. The connection has a short reauthentication window for presentation. This is not automatic detection of role changes elsewhere or a production revocation policy. Restore refund approval before continuing other demos.</p>
+    <div class="notice subtle"><Icon Name="shield" /><span>These HTTP controls issue an updated cookie. Without reloading, the editor applies it at its next authentication refresh, normally within about 10 seconds.</span></div>
+    <p class="fine-print">Demo timing, not a production revocation policy. Restore refund approval before continuing.</p>
 </section>
 
 @code {

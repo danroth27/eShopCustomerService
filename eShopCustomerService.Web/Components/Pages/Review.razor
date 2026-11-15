@@ -23,7 +23,7 @@ else
             }
             @if (draft.ConfirmedAt is null && item.Status == "Open")
             {
-                <div class="notice subtle"><Icon Name="shield" /><span>Confirmation rechecks the business rules and records the outcome and activity history in one transaction.</span></div>
+                <div class="notice subtle"><Icon Name="shield" /><span>Confirmation rechecks permissions and availability, then records the resolution and audit together.</span></div>
                 <AuthorizeView Policy="@(draft.Resolution.Value is RefundResolution ? DemoAuthentication.RefundPolicy : "CustomerService")">
                     <Authorized>
                         <form method="post" action="/returns/confirm">
@@ -33,7 +33,6 @@ else
                     </Authorized>
                     <NotAuthorized><div class="notice error" role="alert">Refund approval is required to confirm this draft.</div></NotAuthorized>
                 </AuthorizeView>
-                <p class="fine-print">This is a local simulation. No real payment or shipment is processed.</p>
             }
             else
             {
@@ -42,12 +41,8 @@ else
             }
         </section>
         <aside class="panel context-panel">
-            <span class="summary-icon"><Icon Name="shield" /></span>
-            <h2>A deliberate final step</h2>
-            <p>The representative confirms from this application's own origin. The form posts a draft ID, not union-valued form fields.</p>
-            <div class="panel-divider"></div>
-            <span class="eyebrow">CSRF DEMONSTRATION</span>
-            <p>Open the independent test origin to attempt this same form submission. A rejected request must leave this draft unchanged.</p>
+            <h2>CSRF demonstration</h2>
+            <p>Try confirmation from another origin. The protected form should reject it without changing this draft.</p>
             <label class="small-label" for="draft-id">Draft ID</label>
             <input id="draft-id" class="code-input" readonly value="@draft.Id" />
             @if (Configuration["CrossOriginUrl"] is { } origin)

@@ -17,7 +17,6 @@ else
     <div class="page-heading detail-heading">
         <div><div class="heading-meta"><span class="eyebrow">RETURN / ORDER #@item.OrderId</span><span class="badge @(item.Status == "Resolved" ? "success" : "warning")">@item.Status</span></div>
             <h1>@(item.Status == "Resolved" ? "A resolution, confirmed." : "Find the right resolution.")</h1><p>@item.Customer <span class="separator">/</span> @item.Company</p></div>
-        <a class="button secondary" href="/contracts"><Icon Name="code" /> API workspace</a>
     </div>
     @if (item.Status == "Resolved")
     {
