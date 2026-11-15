@@ -64,7 +64,7 @@ public static class CaseWorkspaceUpdates
             : updated;
     }
 
-    public static string ReviewReply(AgentState<CaseWorkspaceState> state, string customerReply, bool? accepted)
+    public static ReplyReviewDecision ReviewReply(AgentState<CaseWorkspaceState> state, string customerReply, bool? accepted)
     {
         if (accepted is null)
         {
@@ -82,8 +82,8 @@ public static class CaseWorkspaceUpdates
         {
             state.RejectPredictiveState();
         }
-        return accepted.Value
+        return new(accepted.Value, accepted.Value
             ? "Reply edits accepted in the workspace. Nothing sent or allocated."
-            : "Reply edits discarded; the previous reply is restored. Nothing sent or allocated.";
+            : "Reply edits discarded; the previous reply is restored. Nothing sent or allocated.");
     }
 }

@@ -11,38 +11,94 @@
         <span class="badge">@(Status switch { ConversationStatus.AwaitingInput => "Your input", ConversationStatus.Streaming => "Working", ConversationStatus.Error => "Needs attention", _ => "Ready" })</span>
     </div>
     <p class="agent-chat-intro">The agent shares this resolution editor. Ask it to investigate, edit fields, or help draft your response.</p>
-    <fieldset class="agent-chat-controls" disabled="@(!RendererInfo.IsInteractive || Saving || Agent.State.Value.Status == "Resolved")">
-        <ChatPage Agent="Agent" Placeholder="Ask the agent to help with this resolution...">
-            <MessageListContent>
-                <AgentControls StatusChanged="StatusChanged" />
-                <ResolutionToolRenderers Agent="Agent" />
-            </MessageListContent>
-        </ChatPage>
-    </fieldset>
+    @if (Conversation.RecoveredInterruption)
+    {
+        <p class="notice warning" role="status">The last agent turn was interrupted. Completed conversation and accepted edits were restored; an unaccepted preview or pending approval was not resumed. Check the current resolution before requesting approval again.</p>
+    }
+    @if (_restored)
+    {
+        <fieldset class="agent-chat-controls" disabled="@(!RendererInfo.IsInteractive || Saving || Agent.State.Value.Status == "Resolved")">
+            <CascadingValue Value="_context" IsFixed="true" @key="_context">
+                <div class="sc-ai-root sc-ai-chat-page">
+                    <div class="sc-ai-chat-page__body">
+                        <MessageList>
+                            <AgentControls Conversation="Conversation" StatusChanged="StatusChanged" />
+                            <ResolutionToolRenderers Agent="Agent" />
+                        </MessageList>
+                    </div>
+                    <div class="sc-ai-chat-page__footer">
+                        <div class="sc-ai-chat-page__input-container">
+                            <MessageInput Placeholder="Ask the agent to help with this resolution..." />
+                        </div>
+                    </div>
+                </div>
+            </CascadingValue>
+        </fieldset>
+    }
+    else
+    {
+        <p role="status">Restoring the conversation...</p>
+    }
 </section>
 
 @code {
     [Parameter, EditorRequired] public UIAgent<CaseWorkspaceState> Agent { get; set; } = default!;
+    [Parameter, EditorRequired] public ResolutionConversation Conversation { get; set; } = default!;
     [Parameter] public ConversationStatus Status { get; set; }
     [Parameter] public EventCallback<ConversationStatus> StatusChanged { get; set; }
     [Parameter] public bool Saving { get; set; }
     private ElementReference _panel;
     private AgentWorkspaceScroll? _scroll;
+    private AgentContext? _context;
+    private UIAgent<CaseWorkspaceState>? _currentAgent;
+    private bool _restored;
+    private DotNetObjectReference<ResolutionAgentPanel>? _reference;
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override async Task OnParametersSetAsync()
     {
-        if (_scroll is null)
+        if (!ReferenceEquals(Agent, _currentAgent))
         {
-            _scroll = new(JS);
-            await _scroll.InitializeAsync(_panel);
+            _restored = false;
+            _context?.Dispose();
+            _currentAgent = Agent;
+            _context = new(Agent);
+            // MessageList captures existing turns when it first receives the context.
+            await Conversation.RestoreAsync(_context);
+            _restored = true;
         }
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_restored && _scroll is null)
+        {
+            _scroll = new(JS, Assets);
+            _reference = DotNetObjectReference.Create(this);
+            await _scroll.InitializeAsync(_panel, _reference);
+        }
+    }
+
+    [JSInvokable]
+    public Task PrepareForPause() => InvokeAsync(async () =>
+    {
+        if (_context?.Status is ConversationStatus.Streaming or ConversationStatus.AwaitingInput)
+        {
+            Conversation.InterruptExchange();
+            await _context.CancelAsync();
+        }
+    });
+
     public async ValueTask DisposeAsync()
     {
+        if (_context?.Status is ConversationStatus.Streaming or ConversationStatus.AwaitingInput)
+        {
+            Conversation.InterruptExchange();
+        }
+        _context?.Dispose();
         if (_scroll is not null)
         {
             await _scroll.DisposeAsync();
         }
+        _reference?.Dispose();
     }
 }

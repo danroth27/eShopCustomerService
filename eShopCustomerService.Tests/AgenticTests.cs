@@ -35,6 +35,150 @@ namespace eShopCustomerService.Tests;
 public sealed class AgenticTests
 {
     [Fact]
+    public async Task Conversation_round_trip_restores_rich_evidence_and_continues_with_tool_history()
+    {
+        using var factory = new DemoFactory();
+        var evidence = new CaseContext((await factory.Api.Services.GetRequiredService<ReturnStore>().GetCaseAsync(48024))!,
+            await factory.Api.Services.GetRequiredService<ReturnStore>().GetInventoryAsync(),
+            await factory.Api.Services.GetRequiredService<ReturnStore>().GetAuditAsync(48024));
+        var thread = new ResolutionConversation();
+        thread.BeginExchange();
+        thread.AppendUserMessage(new(ChatRole.User, "Investigate"));
+        thread.AppendUpdate(new()
+        {
+            Role = ChatRole.Assistant,
+            MessageId = "evidence",
+            Contents = [new FunctionCallContent("call-1", "get_case_context", new Dictionary<string, object?>())]
+        });
+        thread.AppendUpdate(new()
+        {
+            Role = ChatRole.Tool,
+            Contents = [new FunctionResultContent("call-1", JsonSerializer.Serialize(evidence, JsonSerializerOptions.Web))]
+        });
+        thread.AppendUpdate(new()
+        {
+            Role = ChatRole.Assistant,
+            MessageId = "answer",
+            Contents = [new RichTextContent("- **Evidence:** Delayed", MarkdownChatClient.Parse("- **Evidence:** Delayed")),
+                new TextContent("- **Evidence:** Delayed")],
+            RawRepresentation = new StateSnapshotEvent
+            {
+                Snapshot = JsonSerializer.SerializeToElement(new CaseWorkspaceState { DeliveryAddress = "Old address" })
+            }
+        });
+        thread.CompleteTurn();
+        thread.CompleteExchange();
+        var restored = JsonSerializer.Deserialize<ResolutionConversation>(
+            JsonSerializer.Serialize(thread, JsonSerializerOptions.Web), JsonSerializerOptions.Web)!;
+        Assert.Equal(thread.ThreadId, restored.ThreadId);
+        Assert.Null(restored.GetUpdates()[^1].RawRepresentation);
+        Assert.IsType<ListNode>(Assert.Single(restored.GetUpdates()[^1].Contents.OfType<RichTextContent>()).Nodes.Single());
+        using var model = new ConversationHistoryModel();
+        using var agent = new UIAgent(model, options =>
+        {
+            options.Thread = restored;
+        });
+        using var context = new AgentContext(agent);
+        await restored.RestoreAsync(context);
+        Assert.Contains(restored.GetUpdates().SelectMany(update => update.Contents),
+            content => content is FunctionResultContent { CallId: "call-1", Result: string result }
+                && JsonSerializer.Deserialize<CaseContext>(result, JsonSerializerOptions.Web)!.Order.OrderId == 48024);
+        Assert.Single(context.Turns);
+        await context.SendMessageAsync("Use my current address");
+        Assert.Contains(model.Messages.SelectMany(message => message.Contents),
+            content => content is FunctionCallContent { CallId: "call-1" });
+        Assert.Contains(model.Messages.SelectMany(message => message.Contents),
+            content => content is FunctionResultContent { CallId: "call-1" });
+        Assert.Equal("Use my current address", model.Messages[^1].Text);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Recovery_discards_incomplete_preview_or_approval_without_executing_tools(bool approval)
+    {
+        var thread = new ResolutionConversation();
+        thread.BeginExchange();
+        thread.AppendUserMessage(new(ChatRole.User, "Investigate"));
+        thread.AppendUpdate(new() { Role = ChatRole.Assistant, Contents = [new TextContent("Evidence retained")] });
+        thread.CompleteTurn();
+        thread.CompleteExchange();
+        var previousId = thread.ThreadId;
+        thread.BeginExchange();
+        thread.AppendUserMessage(new(ChatRole.User, approval ? "Confirm" : "Preview reply"));
+        var call = new FunctionCallContent("pending", approval ? "confirm_resolution" : "propose_customer_reply",
+            new Dictionary<string, object?> { ["customerReply"] = "Unaccepted preview" });
+        thread.AppendUpdate(new()
+        {
+            Role = ChatRole.Assistant,
+            Contents = approval ? [new ToolApprovalRequestContent("approval-1", call)] : [call]
+        });
+        thread.CompleteTurn();
+        if (approval)
+        {
+            thread.InterruptExchange();
+            thread.CompleteExchange();
+        }
+        var restored = JsonSerializer.Deserialize<ResolutionConversation>(
+            JsonSerializer.Serialize(thread, JsonSerializerOptions.Web), JsonSerializerOptions.Web)!;
+        restored.BeginRecovery();
+        Assert.NotEqual(previousId, restored.ThreadId);
+        Assert.True(restored.RecoveredInterruption);
+        using var model = new ConversationHistoryModel();
+        using var agent = new UIAgent(model, options => options.Thread = restored);
+        using var context = new AgentContext(agent);
+        await restored.RestoreAsync(context);
+        Assert.Single(context.Turns);
+        Assert.DoesNotContain(restored.GetUpdates().SelectMany(update => update.Contents),
+            content => content is FunctionCallContent or ToolApprovalRequestContent);
+        Assert.Empty(model.Messages);
+    }
+
+    private sealed class ConversationHistoryModel : IChatClient
+    {
+        public List<ChatMessage> Messages { get; private set; } = [];
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            GetStreamingResponseAsync(messages, options, cancellationToken).ToChatResponseAsync(cancellationToken);
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            Messages = messages.ToList();
+            await Task.CompletedTask;
+            yield return new() { Role = ChatRole.Assistant, Contents = [new TextContent("Continued")] };
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Completed_approval_restores_its_decision_without_resending_confirmation(bool approved)
+    {
+        var thread = new ResolutionConversation();
+        var call = new FunctionCallContent("confirm-1", "confirm_resolution", new Dictionary<string, object?>());
+        var request = new ToolApprovalRequestContent("approval-1", call);
+        thread.BeginExchange();
+        thread.AppendUserMessage(new(ChatRole.User, "Confirm"));
+        thread.AppendUpdate(new() { Role = ChatRole.Assistant, Contents = [request] });
+        thread.CompleteTurn();
+        thread.AppendUserMessage(new(ChatRole.User, [request.CreateResponse(approved)]));
+        thread.AppendUpdate(new() { Role = ChatRole.Assistant, Contents = [new TextContent(approved ? "Confirmed" : "Rejected")] });
+        thread.CompleteTurn();
+        thread.CompleteExchange();
+        var restored = JsonSerializer.Deserialize<ResolutionConversation>(
+            JsonSerializer.Serialize(thread, JsonSerializerOptions.Web), JsonSerializerOptions.Web)!;
+        using var model = new ConversationHistoryModel();
+        using var agent = new UIAgent(model, options => options.Thread = restored);
+        using var context = new AgentContext(agent);
+        await restored.RestoreAsync(context);
+        var approval = Assert.Single(context.Turns.SelectMany(turn => turn.ResponseBlocks).OfType<FunctionApprovalBlock>());
+        Assert.Equal(approved ? ApprovalStatus.Approved : ApprovalStatus.Rejected, approval.Status);
+        Assert.Empty(model.Messages);
+    }
+
+    [Fact]
     public async Task Markdown_stream_renders_lists_and_emphasis_without_changing_text_tools_or_state()
     {
         var snapshot = new StateSnapshotEvent
@@ -97,7 +241,7 @@ public sealed class AgenticTests
         var configuration = Regex.Match(html, "<!--Blazor-Configuration:([^>]+)-->");
         Assert.True(configuration.Success);
         using var options = JsonDocument.Parse(Convert.FromBase64String(configuration.Groups[1].Value));
-        Assert.False(options.RootElement.GetProperty("server").GetProperty("autoPauseEnabled").GetBoolean());
+        Assert.True(options.RootElement.GetProperty("server").GetProperty("autoPauseEnabled").GetBoolean());
         Assert.Contains("class=\"agent-chat-controls\" disabled", html);
         Assert.DoesNotContain("Replacement plan", html);
     }
@@ -543,10 +687,33 @@ public sealed class AgenticTests
         await turn;
         Assert.Null(context.Error);
         Assert.False(ui.State.HasPendingPredictiveState);
+        if (decision != "cancel")
+        {
+            Assert.Equal(decision == "accept", ReplyReviewDecision.FromResult(action.Result?.Result).Accepted);
+            if (decision == "discard")
+            {
+                Assert.Equal(ChatToolMode.None, model.ContinuationToolMode);
+            }
+            else
+            {
+                Assert.NotEqual(ChatToolMode.None, model.ContinuationToolMode);
+            }
+        }
+        Assert.Equal(1, model.ProposalCount);
         var expected = decision == "accept" ? ReplyProposalModel.ProposedReply : initial.CustomerReply;
         Assert.Equal(initial with { CustomerReply = expected }, ui.State.Value);
         await context.SendMessageAsync("Check current reply", timeout.Token);
         Assert.Contains(expected, model.LastWorkspace);
+        awaitingInput = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var nextTurn = context.SendMessageAsync("Preview reply edits again", timeout.Token);
+        await Task.WhenAny(nextTurn, awaitingInput.Task).WaitAsync(timeout.Token);
+        Assert.Null(context.Error);
+        Assert.Equal(ConversationStatus.AwaitingInput, context.Status);
+        Assert.Equal(2, model.ProposalCount);
+        Assert.NotEqual(ChatToolMode.None, model.LatestToolMode);
+        await context.CancelAsync();
+        await nextTurn;
+        Assert.Equal(initial with { CustomerReply = expected }, ui.State.Value);
         Assert.Equal(inventory, await store.GetInventoryAsync());
         Assert.Equal(audit, await store.GetAuditAsync(48024));
         Assert.Equal("Open", (await store.GetCaseAsync(48024))!.Status);
@@ -972,6 +1139,9 @@ public sealed class AgenticTests
     {
         public const string ProposedReply = "Hi Taylor! We have a compatible replacement for your workshop, awaiting approval.";
         public string LastWorkspace { get; private set; } = "";
+        public ChatToolMode? ContinuationToolMode { get; private set; }
+        public ChatToolMode? LatestToolMode { get; private set; }
+        public int ProposalCount { get; private set; }
 
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages,
             ChatOptions? options = null, CancellationToken cancellationToken = default) =>
@@ -982,20 +1152,33 @@ public sealed class AgenticTests
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
+            LatestToolMode = options?.ToolMode;
             var history = messages.ToList();
             if (history.LastOrDefault(m => m.Text?.Contains("Workspace:\n") == true) is { } workspace)
             {
                 LastWorkspace = workspace.Text!;
             }
             var checking = history.Last(m => m.Role == ChatRole.User && !string.IsNullOrWhiteSpace(m.Text)).Text == "Check current reply";
-            var reviewed = history.SelectMany(m => m.Contents).OfType<FunctionResultContent>()
-                .Any(result => result.CallId == "reply-1");
-            yield return checking || reviewed
+            var result = history.Last().Contents.OfType<FunctionResultContent>()
+                .LastOrDefault(result => result.CallId.StartsWith("reply-", StringComparison.Ordinal));
+            var reviewed = result is not null;
+            if (reviewed)
+            {
+                ContinuationToolMode = options?.ToolMode;
+            }
+            // Try another proposal after discard unless the server prohibits tool calls.
+            var acknowledge = reviewed
+                && (ReplyReviewDecision.FromResult(result!.Result).Accepted || options?.ToolMode == ChatToolMode.None);
+            if (!checking && !acknowledge)
+            {
+                ProposalCount++;
+            }
+            yield return checking || acknowledge
                 ? new(ChatRole.Assistant, "Reply noted. Nothing sent or allocated.")
                 : new()
                 {
                     Role = ChatRole.Assistant,
-                    Contents = [new FunctionCallContent("reply-1", "propose_customer_reply",
+                    Contents = [new FunctionCallContent($"reply-{ProposalCount}", "propose_customer_reply",
                         new Dictionary<string, object?> { ["customerReply"] = ProposedReply })]
                 };
         }

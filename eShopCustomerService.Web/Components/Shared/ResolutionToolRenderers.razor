@@ -30,7 +30,7 @@
         <div class="agent-tool-title"><Icon Name="grid" /><strong>Review reply edits</strong></div>
         @if (action.IsComplete)
         {
-            <p>@action.Result?.Result</p>
+            <p>@ReplyReviewDecision.FromResult(action.Result?.Result).Message</p>
         }
         else if (Agent.State.HasPendingPredictiveState)
         {

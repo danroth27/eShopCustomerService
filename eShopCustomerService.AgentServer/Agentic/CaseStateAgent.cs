@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AGUI.Abstractions;
 using AGUI.Server;
+using eShopCustomerService.Contracts;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
@@ -19,13 +20,22 @@ public sealed class CaseStateAgent(AIAgent innerAgent) : DelegatingAIAgent(inner
         AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var inputMessages = messages.ToList();
-        if (options is ChatClientAgentRunOptions runOptions
-            && inputMessages.LastOrDefault()?.Contents.OfType<ToolApprovalResponseContent>()
-                .Any(response => !response.Approved) == true)
+        var lastMessage = inputMessages.LastOrDefault();
+        var rejectedConfirmation = lastMessage?.Contents.OfType<ToolApprovalResponseContent>()
+            .Any(response => !response.Approved) == true;
+        var discardedReply = lastMessage?.Role == ChatRole.Tool
+            && lastMessage.Contents.OfType<FunctionResultContent>().Any(result =>
+                inputMessages.SelectMany(message => message.Contents).OfType<FunctionCallContent>()
+                    .LastOrDefault(call => call.CallId == result.CallId)?.Name == "propose_customer_reply"
+                && !ReplyReviewDecision.FromResult(result.Result).Accepted);
+        if (options is ChatClientAgentRunOptions runOptions && (rejectedConfirmation || discardedReply))
         {
             var decisionOptions = runOptions.ChatOptions?.Clone() ?? new();
             decisionOptions.ToolMode = ChatToolMode.None;
-            decisionOptions.Instructions = $"{decisionOptions.Instructions}\nThe user rejected confirmation. Acknowledge the rejection and stop. Do not retry or change the editor.";
+            var instruction = rejectedConfirmation
+                ? "The user rejected confirmation. Acknowledge the rejection and stop. Do not retry or change the editor."
+                : "The user discarded the reply edits. Acknowledge the discard and stop. Do not propose another edit or change the editor.";
+            decisionOptions.Instructions = $"{decisionOptions.Instructions}\n{instruction}";
             var decisionRunOptions = (ChatClientAgentRunOptions)runOptions.Clone();
             decisionRunOptions.ChatOptions = decisionOptions;
             options = decisionRunOptions;

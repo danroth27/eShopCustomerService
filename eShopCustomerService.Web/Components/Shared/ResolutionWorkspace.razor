@@ -33,7 +33,7 @@ else
         </div>
         @if (_agent is not null)
         {
-            <ResolutionAgentPanel Agent="_agent" Status="_status" StatusChanged="ChangeStatus" Saving="_saving" />
+            <ResolutionAgentPanel Agent="_agent" Conversation="Conversation!" Status="_status" StatusChanged="ChangeStatus" Saving="_saving" />
         }
     </div>
     @if (_reviewState is { } review)
@@ -62,6 +62,7 @@ else
     private IChatClient? _chatClient;
     private IDisposable? _stateSubscription;
     [PersistentState] public PersistedDraft? Draft { get; set; }
+    [PersistentState] public ResolutionConversation? Conversation { get; set; }
     private CaseWorkspaceState? _reviewState;
     private ConversationStatus _status;
     private bool _saving;
@@ -77,6 +78,7 @@ else
             Value = new()
             {
                 OrderId = Order.OrderId,
+                Status = Order.Status == "Resolved" ? "Resolved" : "Editing",
                 DeliveryAddress = Order.DeliveryAddress,
                 RefundAmount = Order.PaidAmount,
                 PaymentReference = $"PAY-{Order.OrderId}",
@@ -84,14 +86,29 @@ else
                 AvailableProducts = await Store.GetInventoryAsync()
             }
         };
-        if (!Connection.IsConfigured || State.Status == "Resolved")
+        if (!Connection.IsConfigured)
         {
             return;
         }
+        if (Conversation is { } restored)
+        {
+            restored.BeginRecovery();
+            var current = await Store.GetCaseAsync(Order.OrderId)
+                ?? throw new InvalidOperationException("The return is no longer available.");
+            Draft.Value = State with
+            {
+                Status = current.Status == "Resolved" ? "Resolved" : "Editing",
+                RefundApprovalAllowed = user.IsInRole("RefundApprover"),
+                AvailableProducts = await Store.GetInventoryAsync(),
+                ValidationMessages = [],
+                ValidationPending = false
+            };
+        }
+        Conversation ??= new();
         _chatClient = Connection.Create(Order.OrderId, user);
-        var threadId = Guid.NewGuid().ToString("N");
         _agent = new UIAgent<CaseWorkspaceState>(_chatClient, options =>
         {
+            options.Thread = Conversation;
             options.RegisterUIAction(AIFunctionFactory.Create(
                 (string customerReply, bool? accepted = null) =>
                     CaseWorkspaceUpdates.ReviewReply(_agent!.State, customerReply, accepted),
@@ -109,11 +126,17 @@ else
                 ],
                 RawRepresentationFactory = _ => new RunAgentInput
                 {
-                    ThreadId = threadId,
+                    ThreadId = Conversation.ThreadId,
                     State = JsonSerializer.SerializeToElement(State, JsonSerializerOptions.Web)
                 }
             };
-            options.StateMapper = context => CaseWorkspaceUpdates.Map(context, _agent!.State);
+            options.StateMapper = context =>
+            {
+                if (!Conversation.Restoring)
+                {
+                    CaseWorkspaceUpdates.Map(context, _agent!.State);
+                }
+            };
         }, State);
         _stateSubscription = _agent.State.OnChanged(RefreshWorkspace);
     }
@@ -124,6 +147,15 @@ else
         if (State.RefundApprovalAllowed != allowed)
         {
             UpdateState(State with { RefundApprovalAllowed = allowed });
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Draft is not null && State.Status == "Resolved" && !_reportedResolution)
+        {
+            _reportedResolution = true;
+            await Resolved.InvokeAsync();
         }
     }
 
@@ -157,7 +189,24 @@ else
     private void SavingChanged(bool saving) => _saving = saving;
     private async Task ChangeStatus(ConversationStatus status)
     {
+        if (status == ConversationStatus.Streaming
+            && _status is ConversationStatus.Idle or ConversationStatus.Error)
+        {
+            Conversation!.BeginExchange();
+        }
         _status = status;
+        if (status == ConversationStatus.Idle)
+        {
+            Conversation!.CompleteExchange();
+        }
+        else if (status == ConversationStatus.Error)
+        {
+            Conversation!.InterruptExchange();
+        }
+        else
+        {
+            Conversation!.Interrupted = true;
+        }
         if (status == ConversationStatus.Idle && State.Status == "Resolved" && !_reportedResolution)
         {
             _reportedResolution = true;

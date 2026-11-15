@@ -24,6 +24,10 @@ builder.Services.AddRazorComponents().AddInteractiveServerComponents(options =>
 {
     // Shorten the default three-minute retention to make disconnected recovery visible in the demo.
     options.DisconnectedCircuitRetentionPeriod = TimeSpan.FromSeconds(10);
+}).AddHubOptions(options =>
+{
+    // Browser-held recovery includes the compressed conversation as well as editor state.
+    options.MaximumReceiveMessageSize = 256 * 1024;
 });
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddSingleton<DemoAuthentication>();

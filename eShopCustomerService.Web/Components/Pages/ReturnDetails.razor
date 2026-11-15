@@ -7,11 +7,6 @@
 
 <PageTitle>Return #@OrderId | eShop</PageTitle>
 
-@if (Connection.IsConfigured)
-{
-    <ConfigureBrowser Options="AgentBrowserOptions" />
-}
-
 <a class="back-link" href="/"><span aria-hidden="true">&larr;</span> Returns queue</a>
 @if (item is null)
 {
@@ -53,7 +48,7 @@ else
                     <a class="button secondary" href="/">Back to queue <Icon Name="arrow" /></a>
                 </section>
             }
-            @if (editorOpened)
+            @if (EditorOpened)
             {
                 <ResolutionWorkspace Order="item" Resolved="RefreshAsync" @key="item.OrderId" />
             }
@@ -75,23 +70,22 @@ else
 }
 
 @code {
-    private static readonly BrowserOptions AgentBrowserOptions =
-        new BrowserOptions().AddAutoPause(options => options.Enabled = false);
     [Parameter] public int OrderId { get; set; }
     [PersistentState] public ResolutionContext? Context { get; set; }
     private ReturnCase? item => Context?.Order;
     private IReadOnlyList<AuditEntry> audit => Context?.Audit ?? [];
     private bool loaded;
-    private bool editorOpened;
+    [PersistentState] public bool EditorOpened { get; set; }
 
     protected override async Task OnParametersSetAsync()
     {
         if (Context is not null && Context.Order.OrderId != OrderId)
         {
             Context = null;
+            EditorOpened = false;
         }
         Context ??= await ContextLoader.LoadAsync(OrderId);
-        editorOpened = item is { Resolution: null };
+        EditorOpened |= item is { Resolution: null };
         loaded = true;
     }
 
